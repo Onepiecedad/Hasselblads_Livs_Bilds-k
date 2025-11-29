@@ -33,12 +33,14 @@ export async function runBatchProcess(
     delayBetweenProducts?: number;
     skipExistingImages?: boolean;
     abortSignal?: AbortSignal;
+    onProductProcessed?: (product: ProcessedProduct) => void;
   } = {}
 ): Promise<BatchResult> {
   const {
     delayBetweenProducts = 2000,
     skipExistingImages = true,
-    abortSignal
+    abortSignal,
+    onProductProcessed
   } = options;
 
   logger.info(`Starting batch process for ${products.length} products`, { options });
@@ -63,6 +65,21 @@ export async function runBatchProcess(
     }
 
     const product = products[i] as ProcessedProduct;
+    // Skip already completed products if restarting a batch
+    if (product.status === 'completed' && skipExistingImages) {
+        results.push(product);
+        if (product.imageSource === 'csv') skipped++; else completed++;
+        onProgress({
+          current: i + 1,
+          total: products.length,
+          currentProduct: product.product_name,
+          completed,
+          failed,
+          skipped
+        });
+        continue;
+    }
+
     logger.info(`>>> Processing [${i + 1}/${products.length}]: ${product.product_name} <<<`);
 
     onProgress({
@@ -93,14 +110,21 @@ export async function runBatchProcess(
             failed++;
         }
 
+        // Live update to parent
+        if (onProductProcessed) {
+            onProductProcessed(result);
+        }
+
         // Auto-save progress varje 5:e produkt
         if (results.length % 5 === 0) {
             try {
-                const remainingProducts = products.slice(i + 1).map(p => ({
-                    ...p as ProcessedProduct,
-                    status: 'pending' as const
-                }));
-                saveState([...results, ...remainingProducts]);
+                // Construct a temporary full list state to save
+                // (Mix of new results and old pending products)
+                const currentFullState = [...results];
+                for(let k=i+1; k<products.length; k++) {
+                    currentFullState.push({ ...products[k] as ProcessedProduct, status: 'pending' });
+                }
+                saveState(currentFullState);
                 logger.info(`Auto-saved progress: ${results.length}/${products.length}`);
             } catch (e) {
                 // Ignore save errors, not critical
@@ -122,6 +146,8 @@ export async function runBatchProcess(
         };
         results.push(result);
         failed++;
+        
+        if (onProductProcessed) onProductProcessed(result);
     }
 
     // Dynamisk delay baserat på resultat
@@ -142,7 +168,7 @@ export async function runBatchProcess(
       dynamicDelay = 100;
     }
 
-    logger.info(`Wait ${dynamicDelay}ms...`);
+    // logger.info(`Wait ${dynamicDelay}ms...`);
     await delay(dynamicDelay);
   }
 

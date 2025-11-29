@@ -25,6 +25,7 @@ export enum AppStep {
   BATCH = 'BATCH',
   PROCESS = 'PROCESS',
   EXPORT = 'EXPORT',
+  EDIT_GRID = 'EDIT_GRID',
 }
 
 export interface ChatMessage {

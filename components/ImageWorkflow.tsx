@@ -1,10 +1,10 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { ProcessedProduct, SearchResult, ChatMessage } from '../types';
-import { searchProductImages, editProductImage, urlToBase64 } from '../geminiService';
+import { searchProductImages, editProductImage, urlToBase64, generateProductImage } from '../geminiService';
 import { uploadToCloudinary, isCloudinaryConfigured } from '../cloudinaryService';
 import { TEMPLATES } from '../constants';
-import { Image as ImageIcon, Loader2, ArrowRight, SkipForward, AlertCircle, Wand2, RefreshCw, Upload, LayoutTemplate, ImageOff, Search, Save, X, Plus, CheckCircle2, ChevronLeft } from 'lucide-react';
+import { Image as ImageIcon, Loader2, ArrowRight, SkipForward, AlertCircle, Wand2, RefreshCw, Upload, LayoutTemplate, ImageOff, Search, Save, X, Plus, CheckCircle2, ChevronLeft, ZoomIn, Sparkles, Camera } from 'lucide-react';
+import { Tooltip } from './Tooltip';
 
 interface ImageWorkflowProps {
   product: ProcessedProduct;
@@ -82,6 +82,11 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
   const [statusMsg, setStatusMsg] = useState('');
   const [customSearchQuery, setCustomSearchQuery] = useState(product.product_name);
   const [searchChips, setSearchChips] = useState<{label: string, active: boolean}[]>([]);
+
+  // Zoom State
+  const [zoomState, setZoomState] = useState({ show: false, x: 0, y: 0 });
+  const [isZoomLocked, setIsZoomLocked] = useState(false);
+  const imageContainerRef = useRef<HTMLDivElement>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const resultsContainerRef = useRef<HTMLDivElement>(null);
@@ -176,6 +181,7 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
     setIsLoading(true);
     setSelectedImageUrl(url);
     setIsEditable(true);
+    setChatMessages([]); // Reset chat
     try {
       const base64DataUri = await urlToBase64(url);
       if (!isMounted.current) return;
@@ -206,15 +212,33 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
       performSearch(newQuery);
   };
 
-  const handleGenerateNew = () => {
-    setSelectedImage(null); setSelectedImageUrl(null); setStep('EDIT'); setIsEditable(true);
-    setChatMessages([{ role: 'model', text: 'Redo att generera. Vad vill du skapa?' }]);
+  const handleStandardGenerate = async () => {
+      setIsLoading(true);
+      setError(null);
+      setSelectedImage(null);
+      setSelectedImageUrl(null);
+      
+      try {
+          // Immediately generate image from scratch
+          const generatedBase64 = await generateProductImage(product.product_name);
+          if (!isMounted.current) return;
+          
+          setSelectedImage(generatedBase64);
+          setStep('EDIT');
+          setIsEditable(true);
+          setChatMessages([{ role: 'model', text: 'Här är en nyskapad studiobild av produkten.' }]);
+
+      } catch (err: any) {
+          if (isMounted.current) setError("Kunde inte generera bild. Försök igen.");
+      } finally {
+          if (isMounted.current) setIsLoading(false);
+      }
   };
 
-  const handleTemplateSelect = (template: typeof TEMPLATES[0]) => {
-      setSelectedImage(null); setSelectedImageUrl(null); setStep('EDIT'); setIsEditable(true);
-      setChatMessages([{ role: 'model', text: `Skapar bild med mall: ${template.label}...` }]);
-      handleSendMessage(`Create a ${template.prompt} of a product named "${product.product_name}".`);
+  const handleStandardPolish = () => {
+      // "Magic Button" prompt
+      const STANDARD_POLISH_PROMPT = "Professional studio retouch. Pure white background, soft commercial lighting, realistic soft shadows under the object. Remove any text, logos or watermarks. Make the product look fresh and high quality. No text overlay.";
+      handleSendMessage(STANDARD_POLISH_PROMPT);
   };
 
   const handleUploadClick = () => { fileInputRef.current?.click(); };
@@ -226,6 +250,7 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
       const result = event.target?.result as string;
       if(isMounted.current) {
           setSelectedImage(result); setSelectedImageUrl(null); setStep('EDIT'); setIsEditable(true);
+          setChatMessages([]);
       }
     };
     reader.readAsDataURL(file);
@@ -236,6 +261,8 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
     const textToSend = directPrompt || chatInput;
     if (!textToSend.trim()) return;
     if (!directPrompt) { setChatMessages(prev => [...prev, { role: 'user', text: textToSend }]); setChatInput(''); }
+    else { setChatMessages(prev => [...prev, { role: 'user', text: '🪄 Applicerar studio-retuschering...' }]); }
+    
     setIsLoading(true);
     try {
       const newImageBase64 = await editProductImage(selectedImage, textToSend);
@@ -243,7 +270,7 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
       
       if (newImageBase64) {
          setSelectedImage(newImageBase64); setSelectedImageUrl(null); setIsEditable(true); 
-         setChatMessages(prev => [...prev, { role: 'model', text: 'Fixat! Nöjd?', image: newImageBase64, isImageGeneration: true }]);
+         setChatMessages(prev => [...prev, { role: 'model', text: 'Klar! Hur ser det ut?', image: newImageBase64, isImageGeneration: true }]);
       } else {
          setChatMessages(prev => [...prev, { role: 'model', text: 'Kunde inte generera bild. Prova igen.' }]);
       }
@@ -273,23 +300,58 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
     }
   };
 
+  // Zoom handlers
+  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!imageContainerRef.current || isZoomLocked) return;
+    const { left, top, width, height } = imageContainerRef.current.getBoundingClientRect();
+    const x = ((e.clientX - left) / width) * 100;
+    const y = ((e.clientY - top) / height) * 100;
+    setZoomState({ show: true, x, y });
+  };
+
+  const handleMouseEnter = () => {
+      if (!isZoomLocked) setZoomState(prev => ({ ...prev, show: true }));
+  };
+
+  const handleMouseLeave = () => {
+      if (!isZoomLocked) setZoomState(prev => ({ ...prev, show: false }));
+  };
+
+  const toggleZoomLock = (e: React.MouseEvent) => {
+      e.stopPropagation(); // Prevent bubbling if necessary
+      if (isZoomLocked) {
+          setIsZoomLocked(false);
+          setZoomState(prev => ({ ...prev, show: false }));
+      } else {
+          // Snap to center or keep current position if hovering
+          setIsZoomLocked(true);
+          setZoomState(prev => ({ ...prev, show: true }));
+      }
+  };
+
+  const handleTemplateSelect = (template: typeof TEMPLATES[0]) => {
+    setSelectedImage(null); setSelectedImageUrl(null); setStep('EDIT'); setIsEditable(true);
+    setChatMessages([{ role: 'model', text: `Skapar bild med mall: ${template.label}...` }]);
+    handleSendMessage(`Create a ${template.prompt} of a product named "${product.product_name}".`);
+  };
+
   if (step === 'SEARCH' || step === 'TEMPLATES') {
     return (
       <div className="flex flex-col h-full bg-stone-50/50">
         <div className="mb-2 px-4 py-4 bg-white border-b border-stone-200 sticky top-0 z-10 shadow-sm">
            <div className="flex justify-between items-start">
                <div>
-                   <h3 className="text-2xl font-bold text-emerald-950 leading-tight serif-font">{product.product_name}</h3>
-                   <div className="flex items-center gap-3 mt-1.5">
+                   <h3 className="text-lg md:text-2xl font-bold text-emerald-950 leading-tight serif-font">{product.product_name}</h3>
+                   <div className="flex flex-wrap items-center gap-2 md:gap-3 mt-1.5">
                         {product.brand && (
                                 <span className="bg-amber-100 text-amber-900 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-widest border border-amber-200">
                                     {product.brand}
                                 </span>
                         )}
-                        <p className="text-stone-500 text-sm truncate max-w-lg">{product.description}</p>
+                        <p className="text-stone-500 text-xs md:text-sm truncate max-w-lg">{product.description}</p>
                    </div>
                </div>
-               <div className="text-right">
+               <div className="text-right hidden sm:block">
                    <div className="text-[10px] text-stone-400 font-mono bg-stone-100 px-2 py-1 rounded">
                        [1-9] Välj | [Enter] Spara
                    </div>
@@ -365,10 +427,22 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
                 ) : (
                 <div className="flex-1 overflow-y-auto px-4 custom-scrollbar pb-20" ref={resultsContainerRef}>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pb-4">
-                    <div onClick={handleGenerateNew} className="aspect-square bg-white border-2 border-dashed border-emerald-200 hover:border-emerald-500 hover:bg-emerald-50 rounded-xl flex flex-col items-center justify-center text-emerald-600 cursor-pointer transition-all group">
-                        <Wand2 size={24} className="mb-2 group-hover:scale-110 transition-transform" />
-                        <span className="text-xs font-bold uppercase tracking-wide">Generera</span>
+                    
+                    {/* STANDARD MAGIC BUTTON */}
+                    <div 
+                        onClick={handleStandardGenerate} 
+                        className="aspect-square bg-gradient-to-br from-emerald-50 to-emerald-100 border-2 border-emerald-300 hover:border-emerald-500 rounded-xl flex flex-col items-center justify-center text-emerald-800 cursor-pointer transition-all group shadow-sm hover:shadow-md relative overflow-hidden"
+                    >
+                         <div className="absolute inset-0 bg-white/50 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                         <div className="relative z-10 flex flex-col items-center text-center p-2">
+                             <div className="bg-white p-3 rounded-full shadow-sm mb-2 group-hover:scale-110 transition-transform text-emerald-600">
+                                 <Sparkles size={24} className="fill-emerald-100" />
+                             </div>
+                             <span className="text-sm font-bold leading-tight">Skapa<br/>Studiobild</span>
+                             <span className="text-[10px] text-emerald-600 mt-1 uppercase font-bold tracking-wide">AI Auto</span>
+                         </div>
                     </div>
+
                     <div onClick={handleUploadClick} className="aspect-square bg-white border-2 border-dashed border-stone-300 hover:border-stone-500 hover:bg-stone-50 rounded-xl flex flex-col items-center justify-center text-stone-500 cursor-pointer transition-all group">
                         <Upload size={24} className="mb-2 group-hover:scale-110 transition-transform" />
                         <span className="text-xs font-bold uppercase tracking-wide">Ladda upp</span>
@@ -382,18 +456,18 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
             )
         )}
 
-        <div className="mt-auto p-4 border-t border-stone-200 flex justify-between gap-4 bg-white sticky bottom-0 z-20 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
+        <div className="mt-auto p-3 md:p-4 border-t border-stone-200 flex justify-between gap-4 bg-white sticky bottom-0 z-20 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
            <div className="flex gap-2">
-               <button onClick={onPrevious} className="flex items-center gap-2 text-stone-500 hover:text-stone-800 px-4 py-2.5 bg-stone-100 hover:bg-stone-200 rounded-lg text-sm font-bold transition-colors">
-                 <ChevronLeft size={18} /> Föregående
+               <button onClick={onPrevious} className="flex items-center gap-2 text-stone-500 hover:text-stone-800 px-3 md:px-4 py-2.5 bg-stone-100 hover:bg-stone-200 rounded-lg text-xs md:text-sm font-bold transition-colors">
+                 <ChevronLeft size={18} /> <span className="hidden sm:inline">Föregående</span>
                </button>
-               <button onClick={onSkip} className="flex items-center gap-2 text-stone-500 hover:text-stone-800 px-4 py-2.5 bg-stone-100 hover:bg-stone-200 rounded-lg text-sm font-bold transition-colors">
-                 <SkipForward size={18} /> Hoppa över
+               <button onClick={onSkip} className="flex items-center gap-2 text-stone-500 hover:text-stone-800 px-3 md:px-4 py-2.5 bg-stone-100 hover:bg-stone-200 rounded-lg text-xs md:text-sm font-bold transition-colors">
+                 <SkipForward size={18} /> <span className="hidden sm:inline">Hoppa över</span>
                </button>
            </div>
            {step === 'SEARCH' && (
              <button onClick={() => performSearch()} disabled={isLoading} className="flex items-center gap-2 text-emerald-700 hover:text-emerald-900 text-sm font-bold">
-                <RefreshCw size={16} className={isLoading ? 'animate-spin' : ''} /> Ladda fler
+                <RefreshCw size={16} className={isLoading ? 'animate-spin' : ''} /> <span className="hidden sm:inline">Ladda fler</span>
              </button>
            )}
         </div>
@@ -406,7 +480,7 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
   return (
     <div className="flex flex-col h-full bg-stone-50/50">
       
-      {/* GALLERY STRIP (NEW) */}
+      {/* GALLERY STRIP */}
       <div className="bg-white border-b border-stone-200 p-3 shadow-sm z-10">
           <div className="flex items-center gap-3 overflow-x-auto pb-1 custom-scrollbar" ref={galleryScrollRef}>
               <span className="text-[10px] font-bold text-stone-400 uppercase tracking-widest shrink-0 mr-1">Galleri</span>
@@ -431,11 +505,39 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
           </div>
       </div>
 
-      <div className="flex-1 flex flex-col md:flex-row gap-6 overflow-hidden p-6">
-        <div className="h-64 shrink-0 md:h-auto md:flex-1 bg-white rounded-2xl flex items-center justify-center p-8 relative overflow-hidden shadow-sm border border-stone-200 group">
+      <div className="flex-1 flex flex-col md:flex-row gap-4 md:gap-6 overflow-hidden p-4 md:p-6">
+        {/* IMAGE PREVIEW WITH ZOOM */}
+        <div 
+           ref={imageContainerRef}
+           className={`h-64 shrink-0 md:h-auto md:flex-1 bg-white rounded-2xl flex items-center justify-center p-4 md:p-8 relative overflow-hidden shadow-sm border border-stone-200 group transition-colors ${zoomState.show ? 'cursor-zoom-in' : ''}`}
+           onMouseMove={handleMouseMove}
+           onMouseEnter={handleMouseEnter}
+           onMouseLeave={handleMouseLeave}
+           onClick={toggleZoomLock}
+        >
            <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-[0.03] pointer-events-none"></div>
+           
            {displayImage ? (
-             <img src={displayImage} className="w-full h-full object-contain drop-shadow-2xl transition-transform duration-500" alt="Selected" />
+             <>
+                <img 
+                    src={displayImage} 
+                    className="w-full h-full object-contain drop-shadow-2xl z-10" 
+                    alt="Selected" 
+                    style={{
+                        transformOrigin: zoomState.show ? `${zoomState.x}% ${zoomState.y}%` : 'center center',
+                        transform: zoomState.show ? 'scale(2)' : 'scale(1)',
+                        // Snappy transition when panning (zoomed), smooth when resetting
+                        transition: zoomState.show ? 'transform 0.1s ease-out' : 'transform 0.4s ease-out'
+                    }}
+                />
+                
+                {/* Zoom Hint Overlay */}
+                {!zoomState.show && (
+                    <div className="absolute top-4 right-4 bg-white/90 p-2 rounded-full shadow-sm text-stone-400 pointer-events-none z-20">
+                        <ZoomIn size={16} />
+                    </div>
+                )}
+             </>
            ) : (
              <div className="text-stone-300 text-center max-w-xs">
                <Wand2 className="w-16 h-16 mx-auto mb-4 opacity-50" />
@@ -452,7 +554,14 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
             </div>
             <button onClick={() => setStep('SEARCH')} className="text-xs text-stone-400 hover:text-emerald-700 font-medium transition-colors">Visa alla (Grid)</button>
           </div>
-          <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-white" ref={scrollRef}>
+          
+          <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-white custom-scrollbar" ref={scrollRef}>
+            {chatMessages.length === 0 && (
+                <div className="text-center text-stone-400 py-10">
+                    <Sparkles className="w-12 h-12 mx-auto mb-3 opacity-20" />
+                    <p className="text-sm">Välj en åtgärd nedan eller skriv vad du vill fixa.</p>
+                </div>
+            )}
             {chatMessages.map((msg, i) => (
               <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                 <div className={`max-w-[90%] p-3 rounded-2xl text-sm leading-relaxed shadow-sm ${msg.role === 'user' ? 'bg-emerald-900 text-white rounded-br-none' : 'bg-stone-100 text-stone-800 rounded-bl-none border border-stone-100'}`}>
@@ -462,20 +571,39 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
             ))}
             {isLoading && <div className="flex justify-start"><div className="bg-stone-50 p-3 rounded-2xl rounded-bl-none text-stone-500 flex items-center gap-2"><Loader2 className="animate-spin w-4 h-4 text-emerald-600" /><span className="text-xs font-medium">Jobbar...</span></div></div>}
           </div>
+          
+          {/* QUICK ACTIONS */}
+          <div className="px-4 py-2 border-t border-stone-100 flex gap-2 overflow-x-auto">
+             <button 
+                onClick={handleStandardPolish}
+                disabled={isLoading || !isEditable}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-800 text-xs font-bold whitespace-nowrap hover:bg-emerald-100 transition-colors"
+             >
+                <Camera size={14} /> 📸 Studio-fix <Tooltip text="Gör bakgrunden vit, ta bort text och fixa ljuset automatiskt." />
+             </button>
+             <button 
+                onClick={() => handleSendMessage("Remove background and make it pure white")}
+                disabled={isLoading || !isEditable}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-stone-50 border border-stone-200 rounded-lg text-stone-600 text-xs font-medium whitespace-nowrap hover:bg-stone-100 transition-colors"
+             >
+                <div className="w-3 h-3 border border-stone-400 bg-white rounded-sm"></div> Vit bakgrund
+             </button>
+          </div>
+
           <div className="p-3 bg-stone-50 border-t border-stone-200">
             <div className="flex gap-2 relative">
-              <input type="text" value={chatInput} disabled={!isEditable || isLoading} onChange={(e) => setChatInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()} placeholder="T.ex. 'Ta bort bakgrunden'" className="flex-1 bg-white border border-stone-300 rounded-lg pl-3 pr-10 py-3 text-sm focus:border-emerald-500 outline-none disabled:bg-stone-100 shadow-sm" />
+              <input type="text" value={chatInput} disabled={!isEditable || isLoading} onChange={(e) => setChatInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()} placeholder="T.ex. 'Ta bort texten'" className="flex-1 bg-white border border-stone-300 rounded-lg pl-3 pr-10 py-3 text-sm focus:border-emerald-500 outline-none disabled:bg-stone-100 shadow-sm" />
               <button onClick={() => handleSendMessage()} disabled={!isEditable || isLoading || !chatInput.trim()} className="absolute right-1.5 top-1.5 bottom-1.5 bg-emerald-900 text-white p-2 rounded-md hover:bg-emerald-800 disabled:opacity-0 transition-all"><ArrowRight size={16} /></button>
             </div>
           </div>
         </div>
       </div>
 
-      <div className="mt-auto p-4 border-t border-stone-200 flex justify-between items-center bg-white">
-        <button onClick={() => setStep('SEARCH')} disabled={isSaving} className="text-stone-400 hover:text-emerald-900 text-sm font-bold flex items-center gap-2 transition-colors uppercase tracking-wide">
+      <div className="mt-auto p-3 md:p-4 border-t border-stone-200 flex justify-between items-center bg-white sticky bottom-0 z-20">
+        <button onClick={() => setStep('SEARCH')} disabled={isSaving} className="text-stone-400 hover:text-emerald-900 text-xs md:text-sm font-bold flex items-center gap-2 transition-colors uppercase tracking-wide">
           <ChevronLeft size={16} /> Tillbaka
         </button>
-        <button onClick={finalizeImage} disabled={!displayImage || isSaving} className="flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-white px-8 py-3 rounded-lg font-bold shadow-lg shadow-amber-200 transition-all hover:-translate-y-0.5 disabled:opacity-50 disabled:shadow-none min-w-[160px] justify-center">
+        <button onClick={finalizeImage} disabled={!displayImage || isSaving} className="flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-white px-6 md:px-8 py-3 rounded-lg font-bold shadow-lg shadow-amber-200 transition-all hover:-translate-y-0.5 disabled:opacity-50 disabled:shadow-none min-w-[140px] md:min-w-[160px] justify-center text-sm md:text-base">
             {isSaving ? <><Loader2 className="animate-spin" size={18} /> Sparar...</> : <>Spara & Nästa <ArrowRight size={18} /></>}
         </button>
       </div>

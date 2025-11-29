@@ -25,16 +25,9 @@ export const setSearchConfig = (apiKey: string, cx: string) => {
     searchConfig = { apiKey: cleanKey, cx: cleanCx };
     cseQuotaExceeded = false;
     
-    // Also update the Gemini Client with this key to ensure AI features work
-    // even if env variables are missing
-    if (cleanKey) {
-        try {
-            ai = new GoogleGenAI({ apiKey: cleanKey });
-            logger.info(`Gemini Client updated with configured key.`);
-        } catch (e) {
-            logger.error('Failed to re-initialize Gemini client', e);
-        }
-    }
+    // NOTE: We do NOT update the Gemini Client (ai) here anymore.
+    // The Gemini client should strictly use the env/process API key or be configured separately.
+    // This prevents the Search API key from breaking AI generation if they are different keys.
     
     logger.info(`Search API configured. Key: ${cleanKey.substring(0, 8)}... CX: ${cleanCx}`);
 };
@@ -430,9 +423,11 @@ export const editProductImage = async (
 
 export const generateProductImage = async (productName: string): Promise<string> => {
     const cleanName = cleanSearchQuery(productName);
-    const prompt = `Professional studio photography of fresh ${cleanName}, pure white background, high resolution, soft commercial lighting, delicious looking.`;
     
-    logger.info('Generating fallback image from scratch', { prompt });
+    // STANDARD PROMPT: As requested, optimized for photorealistic studio quality
+    const prompt = `Photorealistic professional studio photography of ${cleanName}. Pure white background. Soft commercial lighting. 4k resolution. Sharp focus on the product. No text. No watermarks. High quality commercial product shot.`;
+    
+    logger.info('Generating image from scratch (Standard Studio)', { prompt });
     
     try {
         const response = await ai.models.generateContent({
@@ -444,7 +439,7 @@ export const generateProductImage = async (productName: string): Promise<string>
         if (candidates && candidates.length > 0) {
             for (const part of candidates[0].content.parts) {
                 if (part.inlineData && part.inlineData.data) {
-                    logger.success('Fallback image generation successful');
+                    logger.success('Image generation successful');
                     return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
                 }
             }

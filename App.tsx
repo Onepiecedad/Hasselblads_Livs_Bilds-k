@@ -8,13 +8,14 @@ import { BatchModeView } from './components/BatchModeView';
 import { DebugConsole } from './components/DebugConsole';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ProductSidebar } from './components/ProductSidebar';
+import { Tooltip } from './components/Tooltip';
 import { Product, ProcessedProduct, AppStep } from './types';
 import { searchProductImages, setSearchConfig } from './geminiService';
 import { setCloudinaryConfig } from './cloudinaryService';
 import { saveState, loadState, hasSavedState, clearState } from './storageService';
 import { DEFAULT_CSV_CONTENT } from './constants/defaultData';
 import { parseCSVString } from './utils/csvParser';
-import { Layers, Undo2, Rocket, Hand, Filter, CheckCircle2, Zap, Save, Trash2, UploadCloud, PlayCircle, Download, ImageOff, Image as ImageIcon, Database, ShoppingBag, Settings, List, ChevronLeft } from 'lucide-react';
+import { Layers, Undo2, Rocket, Hand, Filter, CheckCircle2, Zap, Save, Trash2, UploadCloud, PlayCircle, Download, ImageOff, Image as ImageIcon, Database, ShoppingBag, Settings, List, ChevronLeft, Loader2, ChevronDown, ChevronUp, RefreshCw, FileText, Edit3 } from 'lucide-react';
 import { logger } from './logger';
 
 const App: React.FC = () => {
@@ -24,6 +25,8 @@ const App: React.FC = () => {
   const [reviewFilter, setReviewFilter] = useState<'all' | 'incomplete'>('all');
   const [filterOriginalImages, setFilterOriginalImages] = useState<boolean>(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isBatchRunning, setIsBatchRunning] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false); // For hiding reset buttons
   const prefetchingRef = useRef<Set<string>>(new Set());
   
   // FIX: Keep a ref to products to access inside effects without adding it to dependencies
@@ -192,6 +195,24 @@ const App: React.FC = () => {
     }
   };
 
+  const handleEditListSave = (updatedProducts: Product[]) => {
+      // Cast back to ProcessedProduct ensuring status exists, default to pending if missing
+      const processed = updatedProducts.map(p => {
+          const existing = products.find(ep => ep.id === p.id);
+          return {
+              ...p,
+              status: existing ? existing.status : 'pending',
+              // Preserve other processed fields if they exist
+              finalImageUrl: existing?.finalImageUrl,
+              imageSource: existing?.imageSource,
+              cloudinaryUrl: existing?.cloudinaryUrl
+          } as ProcessedProduct;
+      });
+      setProducts(processed);
+      saveState(processed);
+      setStep(AppStep.DASHBOARD);
+  };
+
   const handleConfigDone = () => setStep(AppStep.MODE_SELECT);
   const startBatchMode = () => setStep(AppStep.BATCH);
   const startManualMode = () => {
@@ -202,7 +223,20 @@ const App: React.FC = () => {
       setCurrentIndex(firstPending !== -1 ? firstPending : 0);
   };
 
+  const handleRealtimeProductUpdate = (updatedProduct: ProcessedProduct) => {
+      setProducts(prev => prev.map(p => p.id === updatedProduct.id ? updatedProduct : p));
+  };
+
+  const handleReviewDuringBatch = () => {
+      setReviewFilter('incomplete'); // Usually you want to see what's left or just jump in
+      setStep(AppStep.PROCESS);
+      // Try to jump to a pending product, or just 0
+      const firstPending = products.findIndex(p => p.status !== 'completed');
+      setCurrentIndex(firstPending !== -1 ? firstPending : 0);
+  };
+
   const handleBatchComplete = (results: ProcessedProduct[]) => {
+      setIsBatchRunning(false);
       setProducts(results);
       saveState(results);
       const hasFailures = results.some(p => p.status !== 'completed');
@@ -285,6 +319,7 @@ const App: React.FC = () => {
       if(confirm("Vill du återställa appen till det ursprungliga Grundsortimentet? Allt ditt arbete kommer raderas.")) {
           clearState();
           loadDefaultDataset();
+          setShowAdvanced(false);
       }
   }
 
@@ -295,6 +330,7 @@ const App: React.FC = () => {
         setCurrentIndex(0);
         setStep(AppStep.UPLOAD);
         prefetchingRef.current.clear();
+        setShowAdvanced(false);
     }
   };
 
@@ -322,6 +358,21 @@ const App: React.FC = () => {
 
           {step === AppStep.PROCESS ? (
             <div className="flex-1 flex items-center justify-end gap-3 ml-4">
+              
+              {/* Batch Running Indicator */}
+              {isBatchRunning && (
+                <>
+                  <button onClick={() => setStep(AppStep.BATCH)} className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-emerald-800/80 border border-emerald-700/50 rounded-full text-[10px] font-bold uppercase tracking-widest text-emerald-100 animate-pulse hover:bg-emerald-800 mr-2">
+                      <Loader2 size={12} className="animate-spin text-amber-400" />
+                      Batch körs i bakgrunden...
+                  </button>
+                  {/* Mobile Indicator */}
+                  <button onClick={() => setStep(AppStep.BATCH)} className="md:hidden flex items-center justify-center w-8 h-8 bg-emerald-800 rounded-full animate-pulse mr-2 border border-emerald-700/50">
+                      <Loader2 size={14} className="animate-spin text-amber-400" />
+                  </button>
+                </>
+              )}
+
               <button onClick={moveToPrevious} className="p-2 text-emerald-300 hover:text-white transition-colors" title="Föregående (Ctrl+Pil Vänster)">
                 <Undo2 size={20} />
               </button>
@@ -388,98 +439,172 @@ const App: React.FC = () => {
           <div className={`flex-1 w-full h-full transition-all duration-300 ease-in-out ${step === AppStep.PROCESS && isSidebarOpen ? 'lg:mr-80' : ''}`}>
             {/* DASHBOARD & OTHER VIEWS */}
             {step === AppStep.DASHBOARD && (
-                <div className="max-w-5xl mx-auto mt-6">
-                    <div className="bg-white rounded-2xl shadow-lg border border-stone-200 overflow-hidden mb-8">
-                        <div className="p-10 text-center border-b border-emerald-800 bg-emerald-900 relative overflow-hidden">
-                            <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-10"></div>
-                            <div className="relative z-10">
-                                <h1 className="text-4xl font-bold text-amber-400 mb-3 serif-font">Sortiment & Bildhantering</h1>
-                                <p className="text-emerald-100/90 font-medium">Hantera ditt produktsortiment effektivt.</p>
-                            </div>
-                        </div>
-                        
-                        <div className="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-stone-100 border-b border-stone-100">
-                            <div className="p-8 text-center group hover:bg-stone-50 transition-colors cursor-default">
-                                <div className="text-4xl font-bold text-stone-800 mb-1 serif-font">{products.length}</div>
-                                <div className="text-xs font-bold text-stone-400 uppercase tracking-widest">Totalt antal</div>
-                            </div>
-                            <div className="p-8 text-center group hover:bg-emerald-50/50 transition-colors cursor-default">
-                                <div className="text-4xl font-bold text-emerald-700 mb-1 serif-font">{completedCount}</div>
-                                <div className="text-xs font-bold text-emerald-700/60 uppercase tracking-widest">Klara & Redo</div>
-                            </div>
-                            <div className="p-8 text-center group hover:bg-amber-50/50 transition-colors cursor-default">
-                                <div className="text-4xl font-bold text-amber-600 mb-1 serif-font">{incompleteCount}</div>
-                                <div className="text-xs font-bold text-amber-600/60 uppercase tracking-widest">Att åtgärda</div>
-                            </div>
-                        </div>
-                        
-                        <div className="bg-stone-50 p-4 text-center border-b border-stone-100 text-sm text-stone-500">
-                            <span className="font-semibold text-stone-700">{missingImageCount}</span> produkter saknade bild från start.
-                        </div>
+                <div className="max-w-4xl mx-auto mt-6">
+                    
+                    {/* HERO STATUS CARD */}
+                    <div className="bg-white rounded-3xl shadow-xl shadow-stone-200/50 border border-white overflow-hidden mb-10 relative">
+                        <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-emerald-600 via-emerald-400 to-amber-400"></div>
+                        <div className="p-6 md:p-12 text-center">
+                            <h1 className="text-2xl md:text-4xl font-bold text-stone-800 mb-4 serif-font">
+                                Hej! Här är status för din bildstudio.
+                            </h1>
+                            <p className="text-stone-500 text-sm md:text-lg mb-8 max-w-2xl mx-auto">
+                                {products.length === 0 
+                                    ? "Ladda upp en CSV-lista för att komma igång."
+                                    : incompleteCount > 0 
+                                        ? `Du har ${incompleteCount} produkter som behöver bilder. Starta motorn så fixar vi det.`
+                                        : "Bra jobbat! Alla produkter är klara."}
+                            </p>
 
-                        <div className="p-8 grid md:grid-cols-2 gap-6 bg-white">
-                            <button onClick={startBatchMode} className="flex items-center justify-center gap-4 bg-emerald-900 hover:bg-emerald-800 text-white p-6 rounded-xl shadow-lg hover:shadow-emerald-900/20 transition-all hover:-translate-y-1 group border border-emerald-800">
-                                <div className="bg-emerald-800 p-3 rounded-full group-hover:bg-emerald-700 transition-colors">
-                                  <PlayCircle size={32} className="text-amber-400" />
+                            <div className="flex justify-center gap-6 md:gap-12 mb-10">
+                                <div className="text-center">
+                                    <div className="text-2xl md:text-4xl font-bold text-stone-800 mb-1 font-serif">{products.length}</div>
+                                    <div className="text-[10px] font-bold text-stone-400 uppercase tracking-widest flex items-center gap-1 justify-center">
+                                        Totalt <Tooltip text="Antal rader i din importerade fil." />
+                                    </div>
                                 </div>
-                                <div className="text-left">
-                                    <div className="font-bold text-xl serif-font">Fortsätt arbeta</div>
-                                    <div className="text-emerald-200 text-sm">Starta batch eller granska</div>
+                                <div className="text-center">
+                                    <div className="text-2xl md:text-4xl font-bold text-emerald-600 mb-1 font-serif">{completedCount}</div>
+                                    <div className="text-[10px] font-bold text-emerald-600/70 uppercase tracking-widest flex items-center gap-1 justify-center">
+                                        Klara <Tooltip text="Produkter som har fått en bild tilldelad." />
+                                    </div>
                                 </div>
-                            </button>
+                                <div className="text-center">
+                                    <div className="text-2xl md:text-4xl font-bold text-amber-500 mb-1 font-serif">{incompleteCount}</div>
+                                    <div className="text-[10px] font-bold text-amber-500/70 uppercase tracking-widest flex items-center gap-1 justify-center">
+                                        Att göra <Tooltip text="Produkter som saknar bild eller behöver granskas." />
+                                    </div>
+                                </div>
+                            </div>
 
-                            <button onClick={() => setStep(AppStep.EXPORT)} className="flex items-center justify-center gap-4 bg-white border-2 border-stone-200 hover:border-emerald-500 text-stone-700 p-6 rounded-xl transition-all hover:bg-emerald-50/30 group">
-                                <div className="bg-stone-100 p-3 rounded-full group-hover:bg-white group-hover:text-emerald-600 transition-colors">
-                                  <Download size={32} />
-                                </div>
-                                <div className="text-left">
-                                    <div className="font-bold text-xl serif-font group-hover:text-emerald-900">Ladda ner CSV</div>
-                                    <div className="text-stone-400 text-sm group-hover:text-emerald-700/70">Exportera färdigt material</div>
-                                </div>
-                            </button>
-
-                            <button onClick={() => setStep(AppStep.UPLOAD)} className="flex items-center justify-center gap-4 bg-white border-2 border-stone-200 hover:border-blue-300 text-stone-700 p-6 rounded-xl transition-all hover:bg-blue-50/30 group">
-                                <div className="bg-stone-100 p-3 rounded-full group-hover:bg-white group-hover:text-blue-600 transition-colors">
-                                  <UploadCloud size={32} />
-                                </div>
-                                <div className="text-left">
-                                    <div className="font-bold text-xl serif-font group-hover:text-blue-900">Uppdatera lista</div>
-                                    <div className="text-stone-400 text-sm group-hover:text-blue-700/70">Ladda upp nya produkter</div>
-                                </div>
-                            </button>
-                            
-                            <div className="flex flex-col gap-3">
-                                <button onClick={() => setStep(AppStep.CONFIGURE)} className="flex-1 flex items-center justify-center gap-3 bg-stone-50 border border-stone-200 hover:bg-stone-100 text-stone-600 p-3 rounded-xl transition-all text-sm font-medium hover:text-stone-900">
-                                    <Settings size={18} /> Inställningar & API
+                            {/* PRIMARY ACTION BUTTON */}
+                            {products.length === 0 ? (
+                                <button 
+                                    onClick={() => setStep(AppStep.UPLOAD)}
+                                    className="bg-emerald-900 hover:bg-emerald-800 text-white text-lg md:text-xl font-bold py-4 px-6 md:py-6 md:px-12 rounded-2xl shadow-xl shadow-emerald-900/20 hover:scale-105 transition-all duration-300 flex items-center gap-3 mx-auto"
+                                >
+                                    <UploadCloud size={24} className="md:w-7 md:h-7" /> Ladda upp produktlista
                                 </button>
-                                <div className="flex gap-3">
-                                  <button onClick={resetToDefault} className="flex-1 flex items-center justify-center gap-3 bg-stone-50 border border-stone-200 hover:bg-stone-100 text-stone-600 p-3 rounded-xl transition-all text-sm font-medium hover:text-stone-900">
-                                      <Database size={18} /> Återställ Data
-                                  </button>
-                                  <button onClick={resetApp} className="flex-1 flex items-center justify-center gap-3 bg-white border border-red-100 hover:bg-red-50 text-red-400 p-3 rounded-xl transition-all text-sm font-medium hover:text-red-600 hover:border-red-200">
-                                      <Trash2 size={18} /> Rensa
-                                  </button>
-                                </div>
-                            </div>
+                            ) : incompleteCount > 0 ? (
+                                <button 
+                                    onClick={startBatchMode} 
+                                    className="bg-emerald-900 hover:bg-emerald-800 text-white text-lg md:text-xl font-bold py-4 px-6 md:py-6 md:px-12 rounded-2xl shadow-xl shadow-emerald-900/20 hover:scale-105 transition-all duration-300 flex items-center gap-3 mx-auto group"
+                                >
+                                    <div className="bg-emerald-800 p-2 rounded-full group-hover:bg-emerald-700 transition-colors">
+                                        <PlayCircle size={28} className="text-amber-400 fill-amber-400 md:w-8 md:h-8" />
+                                    </div>
+                                    <div className="text-left">
+                                        <div className="leading-none mb-1">Starta Bildmotor</div>
+                                        <div className="text-[10px] md:text-xs text-emerald-300 font-medium uppercase tracking-wider">Automatiskt läge</div>
+                                    </div>
+                                </button>
+                            ) : (
+                                <button 
+                                    onClick={() => setStep(AppStep.EXPORT)} 
+                                    className="bg-blue-600 hover:bg-blue-500 text-white text-lg md:text-xl font-bold py-4 px-6 md:py-6 md:px-12 rounded-2xl shadow-xl shadow-blue-600/20 hover:scale-105 transition-all duration-300 flex items-center gap-3 mx-auto"
+                                >
+                                    <Download size={24} className="md:w-7 md:h-7" /> Ladda ner CSV-fil
+                                </button>
+                            )}
                         </div>
                     </div>
+
+                    {/* SECONDARY ACTIONS */}
+                    {products.length > 0 && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6 mb-12">
+                             <button 
+                                onClick={() => setStep(AppStep.UPLOAD)} 
+                                className="bg-white p-6 rounded-2xl border border-stone-200 hover:border-emerald-500 shadow-sm hover:shadow-md transition-all flex items-center gap-4 text-left group"
+                             >
+                                <div className="bg-stone-50 p-3 rounded-full text-stone-400 group-hover:text-emerald-600 group-hover:bg-emerald-50 transition-colors">
+                                    <UploadCloud size={24} />
+                                </div>
+                                <div>
+                                    <div className="font-bold text-stone-800 group-hover:text-emerald-900">Uppdatera Sortiment</div>
+                                    <div className="text-xs text-stone-400">Importera nya rader från Excel/CSV</div>
+                                </div>
+                             </button>
+
+                             <button 
+                                onClick={() => setStep(AppStep.EDIT_GRID)} 
+                                className="bg-white p-6 rounded-2xl border border-stone-200 hover:border-amber-500 shadow-sm hover:shadow-md transition-all flex items-center gap-4 text-left group"
+                             >
+                                <div className="bg-stone-50 p-3 rounded-full text-stone-400 group-hover:text-amber-600 group-hover:bg-amber-50 transition-colors">
+                                    <Edit3 size={24} />
+                                </div>
+                                <div>
+                                    <div className="font-bold text-stone-800 group-hover:text-amber-900">Redigera lista</div>
+                                    <div className="text-xs text-stone-400">Granska och ändra data manuellt</div>
+                                </div>
+                             </button>
+
+                             <button 
+                                onClick={() => setStep(AppStep.EXPORT)} 
+                                className="bg-white p-6 rounded-2xl border border-stone-200 hover:border-blue-500 shadow-sm hover:shadow-md transition-all flex items-center gap-4 text-left group"
+                             >
+                                <div className="bg-stone-50 p-3 rounded-full text-stone-400 group-hover:text-blue-600 group-hover:bg-blue-50 transition-colors">
+                                    <Download size={24} />
+                                </div>
+                                <div>
+                                    <div className="font-bold text-stone-800 group-hover:text-blue-900">Exportera Filer</div>
+                                    <div className="text-xs text-stone-400">Ladda ner färdigt material</div>
+                                </div>
+                             </button>
+                        </div>
+                    )}
+
+                    {/* ADVANCED / DANGEROUS ZONE */}
+                    <div className="mt-12 text-center">
+                        <button 
+                            onClick={() => setShowAdvanced(!showAdvanced)}
+                            className="inline-flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-stone-400 hover:text-stone-600 transition-colors mb-4"
+                        >
+                            {showAdvanced ? <ChevronUp size={14} /> : <ChevronDown size={14} />} 
+                            Databas & Verktyg
+                        </button>
+                        
+                        {showAdvanced && (
+                            <div className="bg-stone-100/50 rounded-2xl p-6 border border-stone-200 animate-in fade-in slide-in-from-top-4">
+                                <p className="text-xs text-stone-500 mb-4 max-w-md mx-auto">
+                                    Varning: Dessa åtgärder påverkar din databas. Använd endast om du vill börja om från början.
+                                </p>
+                                <div className="flex flex-col sm:flex-row justify-center gap-4">
+                                    <button onClick={resetToDefault} className="px-4 py-2 bg-white border border-stone-300 rounded-lg text-xs font-bold text-stone-600 hover:bg-stone-50 hover:text-stone-900 transition-colors flex items-center justify-center gap-2">
+                                        <Database size={14} /> Återställ Demodata
+                                    </button>
+                                    <button onClick={resetApp} className="px-4 py-2 bg-white border border-red-200 rounded-lg text-xs font-bold text-red-500 hover:bg-red-50 hover:text-red-700 transition-colors flex items-center justify-center gap-2">
+                                        <Trash2 size={14} /> Rensa Allt (Börja om)
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
                 </div>
             )}
 
             {step === AppStep.UPLOAD && <CSVEditor onConfirm={handleCSVImport} isMergeMode={products.length > 0} />}
+            
+            {step === AppStep.EDIT_GRID && (
+                <CSVEditor 
+                    initialProducts={products} 
+                    onConfirm={(updated) => handleEditListSave(updated)} 
+                />
+            )}
+
             {step === AppStep.CONFIGURE && <CloudinaryConfig onConfigured={handleConfigDone} onSkip={handleConfigDone} />}
             {step === AppStep.MODE_SELECT && (
-              <div className="max-w-3xl mx-auto mt-12 p-8 bg-white rounded-2xl shadow-sm border border-stone-200 text-center">
-                  <h2 className="text-3xl font-bold mb-8 text-emerald-950 serif-font">Hur vill du bearbeta {incompleteCount} produkter?</h2>
+              <div className="max-w-3xl mx-auto mt-12 p-6 md:p-8 bg-white rounded-2xl shadow-sm border border-stone-200 text-center">
+                  <h2 className="text-2xl md:text-3xl font-bold mb-8 text-emerald-950 serif-font">Hur vill du bearbeta {incompleteCount} produkter?</h2>
                   <div className="grid md:grid-cols-2 gap-6">
-                      <button onClick={startBatchMode} className="bg-stone-50 hover:bg-emerald-50 border-2 border-stone-200 hover:border-emerald-500 rounded-xl p-8 text-left transition-all group">
+                      <button onClick={startBatchMode} className="bg-stone-50 hover:bg-emerald-50 border-2 border-stone-200 hover:border-emerald-500 rounded-xl p-6 md:p-8 text-left transition-all group">
                           <div className="w-14 h-14 bg-white border border-stone-200 text-emerald-600 rounded-full flex items-center justify-center mb-6 group-hover:scale-110 transition-transform shadow-sm">
                               <Rocket size={28} />
                           </div>
                           <h3 className="text-xl font-bold text-emerald-900 mb-2 serif-font">🚀 Batch-läge (Auto)</h3>
                           <p className="text-stone-500 text-sm leading-relaxed">Appen söker och sparar bilder automatiskt i bakgrunden.</p>
                       </button>
-                      <button onClick={startManualMode} className="bg-stone-50 hover:bg-amber-50 border-2 border-stone-200 hover:border-amber-500 rounded-xl p-8 text-left transition-all group">
+                      <button onClick={startManualMode} className="bg-stone-50 hover:bg-amber-50 border-2 border-stone-200 hover:border-amber-500 rounded-xl p-6 md:p-8 text-left transition-all group">
                           <div className="w-14 h-14 bg-white border border-stone-200 text-amber-600 rounded-full flex items-center justify-center mb-6 group-hover:scale-110 transition-transform shadow-sm">
                               <Hand size={28} />
                           </div>
@@ -492,7 +617,21 @@ const App: React.FC = () => {
                   </div>
               </div>
             )}
-            {step === AppStep.BATCH && <BatchModeView products={products} onComplete={handleBatchComplete} onCancel={() => setStep(AppStep.DASHBOARD)} />}
+            
+            {/* BATCH MODE VIEW - Kept mounted if running */}
+            {(step === AppStep.BATCH || isBatchRunning) && (
+                <div className={step === AppStep.BATCH ? 'block' : 'hidden'}>
+                    <BatchModeView 
+                        products={products} 
+                        onComplete={handleBatchComplete} 
+                        onCancel={() => setStep(AppStep.DASHBOARD)} 
+                        onStatusChange={setIsBatchRunning}
+                        onProductProcessed={handleRealtimeProductUpdate}
+                        onReview={handleReviewDuringBatch}
+                    />
+                </div>
+            )}
+
             {step === AppStep.PROCESS && currentProduct && (
               <div className="h-full flex flex-col">
                   <ImageWorkflow 

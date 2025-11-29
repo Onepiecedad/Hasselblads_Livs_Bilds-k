@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { Cloud, ExternalLink, ArrowRight, Search, Settings, Check } from 'lucide-react';
 import { setCloudinaryConfig, isCloudinaryConfigured } from '../cloudinaryService';
@@ -63,14 +64,14 @@ export const CloudinaryConfig: React.FC<CloudinaryConfigProps> = ({ onConfigured
   };
 
   return (
-    <div className="max-w-2xl mx-auto mt-10 bg-white rounded-2xl shadow-xl border border-stone-200 overflow-hidden">
-      <div className="bg-emerald-900 p-8 text-white flex items-center gap-4">
+    <div className="max-w-2xl mx-auto mt-6 md:mt-10 bg-white rounded-2xl shadow-xl border border-stone-200 overflow-hidden">
+      <div className="bg-emerald-900 p-5 md:p-8 text-white flex items-center gap-4">
          <div className="w-12 h-12 bg-white/10 border border-white/20 rounded-full flex items-center justify-center text-amber-400">
             <Settings size={24} />
          </div>
          <div>
-            <h3 className="text-2xl font-bold serif-font">Systemkonfiguration</h3>
-            <p className="text-emerald-200/80">Koppla dina tjänster för bildhantering.</p>
+            <h3 className="text-xl md:text-2xl font-bold serif-font">Systemkonfiguration</h3>
+            <p className="text-emerald-200/80 text-sm md:text-base">Koppla dina tjänster för bildhantering.</p>
          </div>
       </div>
 
@@ -89,7 +90,7 @@ export const CloudinaryConfig: React.FC<CloudinaryConfigProps> = ({ onConfigured
           </button>
       </div>
 
-      <div className="p-8 min-h-[300px]">
+      <div className="p-5 md:p-8 min-h-[300px]">
         {activeTab === 'cloudinary' && (
             <div className="space-y-6 animate-in fade-in slide-in-from-left-4 duration-300">
                 <div className="p-4 bg-emerald-50 border border-emerald-100 text-emerald-900 rounded-xl text-sm">
@@ -130,12 +131,12 @@ export const CloudinaryConfig: React.FC<CloudinaryConfigProps> = ({ onConfigured
         )}
       </div>
 
-      <div className="p-6 border-t border-stone-100 flex justify-between items-center bg-stone-50">
-         <button onClick={handleSave} className={`px-6 py-3 rounded-xl font-bold transition-colors ${saved ? 'bg-stone-200 text-stone-500 cursor-default' : 'bg-emerald-900 text-white hover:bg-emerald-800'}`}>
+      <div className="p-6 border-t border-stone-100 flex flex-col-reverse sm:flex-row justify-between items-center bg-stone-50 gap-4">
+         <button onClick={handleSave} className={`w-full sm:w-auto px-6 py-3 rounded-xl font-bold transition-colors ${saved ? 'bg-stone-200 text-stone-500 cursor-default' : 'bg-emerald-900 text-white hover:bg-emerald-800'}`}>
             {saved ? 'Inställningar sparade' : 'Spara ändringar'}
          </button>
 
-         <button onClick={handleContinue} disabled={!isCloudinaryConfigured()} className="flex items-center gap-2 bg-amber-500 hover:bg-amber-600 disabled:bg-stone-200 disabled:text-stone-400 text-white px-8 py-3 rounded-xl font-bold shadow-lg shadow-amber-200 transition-all hover:-translate-y-0.5">
+         <button onClick={handleContinue} disabled={!isCloudinaryConfigured()} className="w-full sm:w-auto flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-600 disabled:bg-stone-200 disabled:text-stone-400 text-white px-8 py-3 rounded-xl font-bold shadow-lg shadow-amber-200 transition-all hover:-translate-y-0.5">
             Starta Appen <ArrowRight size={20} />
          </button>
       </div>
