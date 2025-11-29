@@ -2,6 +2,7 @@ import { ProcessedProduct, Product } from './types';
 import { searchProductImages, generateProductImage } from './geminiService';
 import { uploadWithRetry, isCloudinaryConfigured, uploadToCloudinary } from './cloudinaryService';
 import { logger } from './logger';
+import { saveState } from './storageService';
 
 export interface BatchProgress {
   current: number;
@@ -35,7 +36,7 @@ export async function runBatchProcess(
   } = {}
 ): Promise<BatchResult> {
   const {
-    delayBetweenProducts = 1000,
+    delayBetweenProducts = 2000,
     skipExistingImages = true,
     abortSignal
   } = options;
@@ -73,6 +74,8 @@ export async function runBatchProcess(
       skipped
     });
 
+    let result: ProcessedProduct;
+
     // Wrap processing in a timeout race
     try {
         const processPromise = processSingleProduct(product, skipExistingImages);
@@ -80,7 +83,7 @@ export async function runBatchProcess(
             setTimeout(() => reject(new Error('Operation timed out (90s)')), PRODUCT_TIMEOUT_MS)
         );
 
-        const result = await Promise.race([processPromise, timeoutPromise]);
+        result = await Promise.race([processPromise, timeoutPromise]);
         
         results.push(result);
         if (result.status === 'completed') {
@@ -88,6 +91,20 @@ export async function runBatchProcess(
             else completed++;
         } else {
             failed++;
+        }
+
+        // Auto-save progress varje 5:e produkt
+        if (results.length % 5 === 0) {
+            try {
+                const remainingProducts = products.slice(i + 1).map(p => ({
+                    ...p as ProcessedProduct,
+                    status: 'pending' as const
+                }));
+                saveState([...results, ...remainingProducts]);
+                logger.info(`Auto-saved progress: ${results.length}/${products.length}`);
+            } catch (e) {
+                // Ignore save errors, not critical
+            }
         }
 
     } catch (error: any) {
@@ -98,15 +115,34 @@ export async function runBatchProcess(
 
         logger.error(`Timeout/Error processing ${product.product_name}`, { message: errMsg });
         
-        results.push({
+        result = {
             ...product,
             status: 'failed',
             processingError: errMsg
-        });
+        };
+        results.push(result);
         failed++;
     }
 
-    await delay(delayBetweenProducts);
+    // Dynamisk delay baserat på resultat
+    let dynamicDelay = delayBetweenProducts;
+
+    // Om produkten misslyckades, kortare delay
+    if (result.status === 'failed') {
+      dynamicDelay = Math.min(delayBetweenProducts, 200);
+    }
+
+    // Om bilden genererades, längre delay pga tyngre API-anrop
+    if (result.imageSource === 'generated') {
+      dynamicDelay = Math.max(delayBetweenProducts, 2000);
+    }
+
+    // Om det var en CSV-bild (skippad), minimal delay
+    if (result.imageSource === 'csv') {
+      dynamicDelay = 100;
+    }
+
+    await delay(dynamicDelay);
   }
 
   logger.info('Batch process finished', { completed, failed, skipped });
@@ -217,6 +253,10 @@ async function processSingleProduct(product: ProcessedProduct, skipExistingImage
             // We use uploadToCloudinary directly because it's already base64, no retry logic needed for fetch
             const cloudUrl = await uploadToCloudinary(generatedBase64);
             
+            // Extra delay efter generation för att undvika rate limiting
+            logger.info('Adding cooldown after image generation...');
+            await delay(2000);
+
             return {
                 ...product,
                 status: 'completed',
@@ -234,10 +274,13 @@ async function processSingleProduct(product: ProcessedProduct, skipExistingImage
         }
     }
 
+    const errorMsg = 'All strategies exhausted: CSV upload failed, Search found no valid images, Generation not attempted or failed';
+    logger.error(`Product failed: ${product.product_name}`, { reason: errorMsg });
+
     return {
         ...product,
         status: 'failed',
-        processingError: 'No images found and Generation requires Cloudinary config.'
+        processingError: errorMsg
     };
 }
 

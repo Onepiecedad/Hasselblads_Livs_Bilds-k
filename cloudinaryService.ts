@@ -6,11 +6,34 @@ interface CloudinaryConfig {
   uploadPreset: string;
 }
 
+interface TransformationConfig {
+  width: number;
+  height: number;
+  background: 'white' | 'transparent' | 'auto';
+  quality: 'auto' | 'best' | number;
+}
+
 let config: CloudinaryConfig | null = null;
+
+let transformConfig: TransformationConfig = {
+  width: 1000,
+  height: 1000,
+  background: 'white',
+  quality: 'auto'
+};
 
 export function setCloudinaryConfig(cloudName: string, uploadPreset: string): void {
   config = { cloudName, uploadPreset };
   logger.info('Cloudinary configured', { cloudName });
+}
+
+export function setTransformConfig(config: Partial<TransformationConfig>): void {
+  transformConfig = { ...transformConfig, ...config };
+  logger.info('Cloudinary transform config updated', transformConfig);
+}
+
+export function getTransformConfig(): TransformationConfig {
+  return transformConfig;
 }
 
 export function isCloudinaryConfigured(): boolean {
@@ -58,13 +81,19 @@ export async function uploadToCloudinary(imageData: string): Promise<string> {
   let secureUrl = data.secure_url;
 
   // --- E-COMMERCE STANDARDIZATION ---
-  // We inject transformations into the URL to ensure uniformity across all images in WooCommerce.
-  // c_pad: Resize to fit dimensions, padding with background (prevents cropping product).
-  // b_white: Sets the padding background to pure white.
-  // w_1000,h_1000: Standard high-res square for e-commerce (good for zoom).
-  // f_jpg: Force JPG format for best compatibility.
-  // q_auto: Automatic quality optimization.
-  const transformation = 'c_pad,b_white,w_1000,h_1000,f_jpg,q_auto';
+  const bgParam = transformConfig.background === 'transparent' 
+    ? 'b_transparent' 
+    : transformConfig.background === 'auto' 
+        ? 'b_auto' 
+        : 'b_white';
+
+  const qualityParam = typeof transformConfig.quality === 'number' 
+    ? `q_${transformConfig.quality}` 
+    : 'q_auto';
+
+  const formatParam = transformConfig.background === 'transparent' ? 'f_png' : 'f_jpg';
+
+  const transformation = `c_pad,${bgParam},w_${transformConfig.width},h_${transformConfig.height},${formatParam},${qualityParam}`;
 
   // Inject transformation before the version component (e.g., /v12345/)
   if (secureUrl.includes('/upload/')) {

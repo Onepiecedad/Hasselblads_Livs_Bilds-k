@@ -115,16 +115,30 @@ const optimizeQuery = (query: string): string => {
     const lower = cleaned.toLowerCase();
     const words = cleaned.split(/\s+/).filter(w => w.trim().length > 0);
     
-    // List of generic items that often return Wikipedia pages if searched alone
+    // Utökad lista på generiska items som ofta returnerar Wikipedia
     const generics = [
-        'apelsin', 'banan', 'äpple', 'päron', 'tomat', 'gurka', 'potatis', 'lök', 'morot', 
-        'citron', 'lime', 'mango', 'avokado', 'paprika', 'kål', 'sallad', 'melon'
+        'apelsin', 'banan', 'äpple', 'päron', 'tomat', 'gurka', 'potatis', 'lök', 
+        'morot', 'citron', 'lime', 'mango', 'avokado', 'paprika', 'kål', 'sallad', 
+        'melon', 'druvor', 'jordgubbar', 'hallon', 'blåbär', 'körsbär', 'plommon',
+        'broccoli', 'spenat', 'selleri', 'purjolök', 'vitlök', 'ingefära', 'dill',
+        'persilja', 'basilika', 'oregano', 'timjan', 'rosmarin', 'mynta', 'koriander',
+        'ananas', 'kiwi', 'fikon', 'dadlar', 'oliver', 'kapris', 'champinjoner',
+        'zucchini', 'aubergine', 'fänkål', 'rödbetor', 'palsternacka', 'rädisor'
     ];
     
-    // If it's a single word and matches a generic food item, add context
-    if (words.length === 1 && generics.some(g => lower.includes(g))) {
-        return `${cleaned} frukt grönsak produkt`; 
+    // Om det är 1-2 ord och matchar generisk mat, lägg till kontext
+    if (words.length <= 2) {
+        const isGeneric = generics.some(g => lower.includes(g));
+        if (isGeneric) {
+            return `${cleaned} frukt grönsak produkt butik`;
+        }
     }
+    
+    // Om query är väldigt kort, lägg till kontext
+    if (cleaned.length < 10) {
+        return `${cleaned} produkt`;
+    }
+    
     return cleaned;
 };
 
@@ -391,51 +405,62 @@ export const urlToBase64 = async (url: string, timeoutMs: number = 8000): Promis
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(url)}`;
 
-  try {
-    let targetUrl = url;
-    let useProxy = false;
-
-    // Step 1: Pre-flight HEAD Check to validate content type BEFORE download
-    try {
-        const headResponse = await fetch(url, { method: 'HEAD', signal: controller.signal });
-        const contentType = headResponse.headers.get('content-type');
-        if (contentType && (contentType.includes('text/html') || contentType.includes('application/xhtml'))) {
-            throw new Error('URL_IS_HTML');
-        }
-    } catch (headError: any) {
-        if (headError.message === 'URL_IS_HTML') throw headError;
-        // If HEAD failed (e.g., CORS), we assume we might need a proxy for the GET.
-        useProxy = true;
-    }
-
-    if (useProxy) {
-        targetUrl = proxyUrl;
-    } else {
-        // Just standard headers for direct fetch
-    }
-    
-    // Step 2: Download
+  const tryFetch = async (targetUrl: string): Promise<Blob> => {
     const response = await fetch(targetUrl, { signal: controller.signal });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    
-    // Double check headers from the GET response
-    const contentType = response.headers.get('content-type');
-    if (contentType && (contentType.includes('text/html') || contentType.includes('application/xhtml'))) {
-        throw new Error('URL_IS_HTML'); 
+
+    const contentType = response.headers.get('content-type') || '';
+    if (contentType.includes('text/html') || contentType.includes('application/xhtml')) {
+      throw new Error('URL_IS_HTML');
     }
 
     const blob = await response.blob();
-    
-    // Final sanity check on blob type and size
-    if (!blob.type.startsWith('image/') && blob.size > 500000) {
-        // Large file not marked as image -> likely HTML
+
+    // Validera att blob faktiskt är en bild
+    if (!blob.type.startsWith('image/')) {
+      // Om blob är stor och inte markerad som bild, troligen HTML/annat
+      if (blob.size > 100000) {
         throw new Error('INVALID_IMAGE_DATA');
+      }
+    }
+
+    return blob;
+  };
+
+  try {
+    let blob: Blob;
+
+    // Attempt 1: Direct fetch
+    try {
+      blob = await tryFetch(url);
+      logger.info(`Direct fetch succeeded for ${url.substring(0, 50)}...`);
+    } catch (directError: any) {
+      // Om det är HTML eller timeout, kasta vidare direkt
+      if (directError.message === 'URL_IS_HTML' || 
+          directError.message === 'INVALID_IMAGE_DATA' ||
+          directError.name === 'AbortError') {
+        throw directError;
+      }
+
+      // Attempt 2: Proxy fallback för CORS-fel
+      logger.info(`Direct fetch failed, trying proxy for ${url.substring(0, 50)}...`);
+      try {
+        blob = await tryFetch(proxyUrl);
+        logger.info(`Proxy fetch succeeded`);
+      } catch (proxyError: any) {
+        // Om proxy också misslyckas, kasta ursprungliga felet eller proxy-felet
+        if (proxyError.message === 'URL_IS_HTML' || proxyError.message === 'INVALID_IMAGE_DATA') {
+          throw proxyError;
+        }
+        throw new Error(`CORS_ERROR: Both direct and proxy failed`);
+      }
     }
 
     return await blobToDataUrl(blob);
+
   } catch (error: any) {
     if (error.name === 'AbortError') {
-        throw new Error('TIMEOUT');
+      throw new Error('TIMEOUT');
     }
     throw error;
   } finally {

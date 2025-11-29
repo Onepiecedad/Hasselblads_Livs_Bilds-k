@@ -5,6 +5,7 @@ import ExportView from './components/ExportView';
 import { CloudinaryConfig } from './components/CloudinaryConfig';
 import { BatchModeView } from './components/BatchModeView';
 import { DebugConsole } from './components/DebugConsole';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { Product, ProcessedProduct, AppStep } from './types';
 import { searchProductImages } from './geminiService';
 import { saveState, loadState, hasSavedState, clearState, getMeta } from './storageService';
@@ -247,192 +248,194 @@ const App: React.FC = () => {
   const missingImageCount = products.filter(p => !p.initialImages || p.initialImages.length === 0).length;
 
   return (
-    <div className="min-h-screen flex flex-col font-sans text-stone-900 pb-20 bg-stone-50 selection:bg-emerald-200 selection:text-emerald-900">
-      
-      {/* HEADER */}
-      <header className="bg-emerald-900 text-white h-16 flex items-center justify-between px-4 md:px-6 sticky top-0 z-30 shadow-md">
-        <div className="flex items-center gap-3 cursor-pointer" onClick={() => setStep(AppStep.DASHBOARD)}>
-          <div className="bg-white/10 p-1.5 rounded-lg border border-white/10">
-            <ShoppingBag size={20} className="text-amber-400" />
+    <ErrorBoundary>
+      <div className="min-h-screen flex flex-col font-sans text-stone-900 pb-20 bg-stone-50 selection:bg-emerald-200 selection:text-emerald-900">
+        
+        {/* HEADER */}
+        <header className="bg-emerald-900 text-white h-16 flex items-center justify-between px-4 md:px-6 sticky top-0 z-30 shadow-md">
+          <div className="flex items-center gap-3 cursor-pointer" onClick={() => setStep(AppStep.DASHBOARD)}>
+            <div className="bg-white/10 p-1.5 rounded-lg border border-white/10">
+              <ShoppingBag size={20} className="text-amber-400" />
+            </div>
+            <div>
+              <h1 className="font-bold text-lg tracking-wide serif-font leading-none">Hasselblads</h1>
+              <span className="text-[10px] text-emerald-200 uppercase tracking-widest font-medium">Bildstudio</span>
+            </div>
           </div>
-          <div>
-            <h1 className="font-bold text-lg tracking-wide serif-font leading-none">Hasselblads</h1>
-            <span className="text-[10px] text-emerald-200 uppercase tracking-widest font-medium">Bildstudio</span>
-          </div>
-        </div>
 
-        {step === AppStep.PROCESS ? (
-          <div className="flex-1 flex items-center justify-end gap-3 ml-4">
-             <button onClick={handleUndo} className="p-2 text-emerald-300 hover:text-white transition-colors" title="Föregående">
-               <Undo2 size={20} />
-             </button>
-             <div className="flex-1 max-w-xl mr-auto ml-3 hidden md:block">
-                <div className="flex justify-between text-xs font-medium text-emerald-200 mb-1.5">
-                  <span>
-                      {reviewFilter === 'incomplete' 
-                        ? `Att göra: ${incompleteCount} kvar`
-                        : `Produkt ${currentIndex + 1} av ${products.length}`
-                      }
-                  </span>
-                  {reviewFilter === 'all' && (
-                      <span className="flex items-center gap-1 text-emerald-400"><Zap size={10} className="fill-current" /> Auto-buffer</span>
-                  )}
-                </div>
-                <div className="h-1.5 bg-emerald-950/50 rounded-full overflow-hidden border border-white/5">
-                  <div 
-                    className={`h-full rounded-full transition-all duration-500 ease-out ${reviewFilter === 'incomplete' ? 'bg-amber-500' : 'bg-emerald-400'}`}
-                    style={{ width: `${progress}%` }}
-                  />
-                </div>
-             </div>
-             
-             <button
-                onClick={toggleReviewFilter}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-                    reviewFilter === 'incomplete' 
-                    ? 'bg-amber-500/20 border-amber-500/50 text-amber-300 hover:bg-amber-500/30' 
-                    : 'bg-emerald-800 border-emerald-700 text-emerald-100 hover:bg-emerald-700'
-                }`}
-                title="Visa endast produkter som ej är klara"
-             >
-                 {reviewFilter === 'incomplete' ? <Filter size={14} /> : <CheckCircle2 size={14} />}
-                 <span className="hidden lg:inline">
-                     {reviewFilter === 'incomplete' ? 'Visa: Att göra' : 'Visa: Alla'}
-                 </span>
-             </button>
-
-             <button onClick={() => setStep(AppStep.DASHBOARD)} className="ml-2 text-emerald-300 hover:text-white font-medium text-xs border-l border-emerald-800 pl-4">
-                 Avsluta
-             </button>
-          </div>
-        ) : (
-            <button 
-                onClick={() => setStep(AppStep.CONFIGURE)}
-                className="flex items-center gap-2 text-emerald-200 hover:text-white hover:bg-white/10 px-3 py-1.5 rounded-lg transition-colors text-sm font-medium"
-            >
-                <Settings size={16} /> Inställningar
-            </button>
-        )}
-      </header>
-
-      <main className="flex-1 p-4 md:p-8 overflow-hidden flex flex-col">
-        <div className="flex-1 max-w-7xl mx-auto w-full h-full">
-          
-          {/* --- DASHBOARD VIEW --- */}
-          {step === AppStep.DASHBOARD && (
-              <div className="max-w-5xl mx-auto mt-6">
-                  <div className="bg-white rounded-2xl shadow-lg border border-stone-200 overflow-hidden mb-8">
-                      <div className="p-10 text-center border-b border-emerald-800 bg-emerald-900 relative overflow-hidden">
-                          <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-10"></div>
-                          <div className="relative z-10">
-                              <h1 className="text-4xl font-bold text-amber-400 mb-3 serif-font">Sortiment & Bildhantering</h1>
-                              <p className="text-emerald-100/90 font-medium">Hantera ditt produktsortiment effektivt.</p>
-                          </div>
-                      </div>
-                      
-                      <div className="grid grid-cols-3 divide-x divide-stone-100 border-b border-stone-100">
-                          <div className="p-8 text-center group hover:bg-stone-50 transition-colors cursor-default">
-                              <div className="text-4xl font-bold text-stone-800 mb-1 serif-font">{products.length}</div>
-                              <div className="text-xs font-bold text-stone-400 uppercase tracking-widest">Totalt antal</div>
-                          </div>
-                          <div className="p-8 text-center group hover:bg-emerald-50/50 transition-colors cursor-default">
-                              <div className="text-4xl font-bold text-emerald-700 mb-1 serif-font">{completedCount}</div>
-                              <div className="text-xs font-bold text-emerald-700/60 uppercase tracking-widest">Klara & Redo</div>
-                          </div>
-                          <div className="p-8 text-center group hover:bg-amber-50/50 transition-colors cursor-default">
-                              <div className="text-4xl font-bold text-amber-600 mb-1 serif-font">{incompleteCount}</div>
-                              <div className="text-xs font-bold text-amber-600/60 uppercase tracking-widest">Att åtgärda</div>
-                          </div>
-                      </div>
-                      
-                      <div className="bg-stone-50 p-4 text-center border-b border-stone-100 text-sm text-stone-500">
-                          <span className="font-semibold text-stone-700">{missingImageCount}</span> produkter saknade bild från start.
-                      </div>
-
-                      <div className="p-8 grid md:grid-cols-2 gap-6 bg-white">
-                          <button onClick={startBatchMode} className="flex items-center justify-center gap-4 bg-emerald-900 hover:bg-emerald-800 text-white p-6 rounded-xl shadow-lg hover:shadow-emerald-900/20 transition-all hover:-translate-y-1 group border border-emerald-800">
-                              <div className="bg-emerald-800 p-3 rounded-full group-hover:bg-emerald-700 transition-colors">
-                                <PlayCircle size={32} className="text-amber-400" />
-                              </div>
-                              <div className="text-left">
-                                  <div className="font-bold text-xl serif-font">Fortsätt arbeta</div>
-                                  <div className="text-emerald-200 text-sm">Starta batch eller granska</div>
-                              </div>
-                          </button>
-
-                          <button onClick={() => setStep(AppStep.EXPORT)} className="flex items-center justify-center gap-4 bg-white border-2 border-stone-200 hover:border-emerald-500 text-stone-700 p-6 rounded-xl transition-all hover:bg-emerald-50/30 group">
-                              <div className="bg-stone-100 p-3 rounded-full group-hover:bg-white group-hover:text-emerald-600 transition-colors">
-                                <Download size={32} />
-                              </div>
-                              <div className="text-left">
-                                  <div className="font-bold text-xl serif-font group-hover:text-emerald-900">Ladda ner CSV</div>
-                                  <div className="text-stone-400 text-sm group-hover:text-emerald-700/70">Exportera färdigt material</div>
-                              </div>
-                          </button>
-
-                          <button onClick={() => setStep(AppStep.UPLOAD)} className="flex items-center justify-center gap-4 bg-white border-2 border-stone-200 hover:border-blue-300 text-stone-700 p-6 rounded-xl transition-all hover:bg-blue-50/30 group">
-                              <div className="bg-stone-100 p-3 rounded-full group-hover:bg-white group-hover:text-blue-600 transition-colors">
-                                <UploadCloud size={32} />
-                              </div>
-                              <div className="text-left">
-                                  <div className="font-bold text-xl serif-font group-hover:text-blue-900">Uppdatera lista</div>
-                                  <div className="text-stone-400 text-sm group-hover:text-blue-700/70">Ladda upp nya produkter</div>
-                              </div>
-                          </button>
-                          
-                          <div className="flex flex-col gap-3">
-                              <button onClick={() => setStep(AppStep.CONFIGURE)} className="flex-1 flex items-center justify-center gap-3 bg-stone-50 border border-stone-200 hover:bg-stone-100 text-stone-600 p-3 rounded-xl transition-all text-sm font-medium hover:text-stone-900">
-                                  <Settings size={18} /> Inställningar & API
-                              </button>
-                              <div className="flex gap-3">
-                                <button onClick={resetToDefault} className="flex-1 flex items-center justify-center gap-3 bg-stone-50 border border-stone-200 hover:bg-stone-100 text-stone-600 p-3 rounded-xl transition-all text-sm font-medium hover:text-stone-900">
-                                    <Database size={18} /> Återställ Data
-                                </button>
-                                <button onClick={resetApp} className="flex-1 flex items-center justify-center gap-3 bg-white border border-red-100 hover:bg-red-50 text-red-400 p-3 rounded-xl transition-all text-sm font-medium hover:text-red-600 hover:border-red-200">
-                                    <Trash2 size={18} /> Rensa
-                                </button>
-                              </div>
-                          </div>
-                      </div>
+          {step === AppStep.PROCESS ? (
+            <div className="flex-1 flex items-center justify-end gap-3 ml-4">
+              <button onClick={handleUndo} className="p-2 text-emerald-300 hover:text-white transition-colors" title="Föregående">
+                <Undo2 size={20} />
+              </button>
+              <div className="flex-1 max-w-xl mr-auto ml-3 hidden md:block">
+                  <div className="flex justify-between text-xs font-medium text-emerald-200 mb-1.5">
+                    <span>
+                        {reviewFilter === 'incomplete' 
+                          ? `Att göra: ${incompleteCount} kvar`
+                          : `Produkt ${currentIndex + 1} av ${products.length}`
+                        }
+                    </span>
+                    {reviewFilter === 'all' && (
+                        <span className="flex items-center gap-1 text-emerald-400"><Zap size={10} className="fill-current" /> Auto-buffer</span>
+                    )}
+                  </div>
+                  <div className="h-1.5 bg-emerald-950/50 rounded-full overflow-hidden border border-white/5">
+                    <div 
+                      className={`h-full rounded-full transition-all duration-500 ease-out ${reviewFilter === 'incomplete' ? 'bg-amber-500' : 'bg-emerald-400'}`}
+                      style={{ width: `${progress}%` }}
+                    />
                   </div>
               </div>
-          )}
+              
+              <button
+                  onClick={toggleReviewFilter}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                      reviewFilter === 'incomplete' 
+                      ? 'bg-amber-500/20 border-amber-500/50 text-amber-300 hover:bg-amber-500/30' 
+                      : 'bg-emerald-800 border-emerald-700 text-emerald-100 hover:bg-emerald-700'
+                  }`}
+                  title="Visa endast produkter som ej är klara"
+              >
+                  {reviewFilter === 'incomplete' ? <Filter size={14} /> : <CheckCircle2 size={14} />}
+                  <span className="hidden lg:inline">
+                      {reviewFilter === 'incomplete' ? 'Visa: Att göra' : 'Visa: Alla'}
+                  </span>
+              </button>
 
-          {step === AppStep.UPLOAD && <CSVEditor onConfirm={handleCSVImport} isMergeMode={products.length > 0} />}
-          {step === AppStep.CONFIGURE && <CloudinaryConfig onConfigured={handleConfigDone} onSkip={handleConfigDone} />}
-          {step === AppStep.MODE_SELECT && (
-             <div className="max-w-3xl mx-auto mt-12 p-8 bg-white rounded-2xl shadow-sm border border-stone-200 text-center">
-                <h2 className="text-3xl font-bold mb-8 text-emerald-950 serif-font">Hur vill du bearbeta {incompleteCount} produkter?</h2>
-                <div className="grid md:grid-cols-2 gap-6">
-                    <button onClick={startBatchMode} className="bg-stone-50 hover:bg-emerald-50 border-2 border-stone-200 hover:border-emerald-500 rounded-xl p-8 text-left transition-all group">
-                        <div className="w-14 h-14 bg-white border border-stone-200 text-emerald-600 rounded-full flex items-center justify-center mb-6 group-hover:scale-110 transition-transform shadow-sm">
-                            <Rocket size={28} />
-                        </div>
-                        <h3 className="text-xl font-bold text-emerald-900 mb-2 serif-font">🚀 Batch-läge (Auto)</h3>
-                        <p className="text-stone-500 text-sm leading-relaxed">Appen söker och sparar bilder automatiskt i bakgrunden.</p>
-                    </button>
-                    <button onClick={startManualMode} className="bg-stone-50 hover:bg-amber-50 border-2 border-stone-200 hover:border-amber-500 rounded-xl p-8 text-left transition-all group">
-                        <div className="w-14 h-14 bg-white border border-stone-200 text-amber-600 rounded-full flex items-center justify-center mb-6 group-hover:scale-110 transition-transform shadow-sm">
-                            <Hand size={28} />
-                        </div>
-                        <h3 className="text-xl font-bold text-emerald-900 mb-2 serif-font">⚡ Manuellt läge</h3>
-                        <p className="text-stone-500 text-sm leading-relaxed">Du väljer bästa bilden. Appen för-laddar nästa bild blixtsnabbt.</p>
-                    </button>
-                </div>
-                <div className="mt-8">
-                    <button onClick={() => setStep(AppStep.DASHBOARD)} className="text-stone-400 hover:text-emerald-800 text-sm font-medium border-b border-transparent hover:border-emerald-800 transition-all">Tillbaka till Dashboard</button>
-                </div>
+              <button onClick={() => setStep(AppStep.DASHBOARD)} className="ml-2 text-emerald-300 hover:text-white font-medium text-xs border-l border-emerald-800 pl-4">
+                  Avsluta
+              </button>
             </div>
+          ) : (
+              <button 
+                  onClick={() => setStep(AppStep.CONFIGURE)}
+                  className="flex items-center gap-2 text-emerald-200 hover:text-white hover:bg-white/10 px-3 py-1.5 rounded-lg transition-colors text-sm font-medium"
+              >
+                  <Settings size={16} /> Inställningar
+              </button>
           )}
-          {step === AppStep.BATCH && <BatchModeView products={products} onComplete={handleBatchComplete} onCancel={() => setStep(AppStep.DASHBOARD)} />}
-          {step === AppStep.PROCESS && currentProduct && (
-            <div className="h-full flex flex-col"><ImageWorkflow key={currentProduct.id} product={currentProduct} onComplete={handleProductComplete} onSkip={handleProductSkip} /></div>
-          )}
-          {step === AppStep.EXPORT && <ExportView products={products} onReset={() => setStep(AppStep.DASHBOARD)} />}
-        </div>
-      </main>
-      <DebugConsole />
-    </div>
+        </header>
+
+        <main className="flex-1 p-4 md:p-8 overflow-hidden flex flex-col">
+          <div className="flex-1 max-w-7xl mx-auto w-full h-full">
+            
+            {/* --- DASHBOARD VIEW --- */}
+            {step === AppStep.DASHBOARD && (
+                <div className="max-w-5xl mx-auto mt-6">
+                    <div className="bg-white rounded-2xl shadow-lg border border-stone-200 overflow-hidden mb-8">
+                        <div className="p-10 text-center border-b border-emerald-800 bg-emerald-900 relative overflow-hidden">
+                            <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-10"></div>
+                            <div className="relative z-10">
+                                <h1 className="text-4xl font-bold text-amber-400 mb-3 serif-font">Sortiment & Bildhantering</h1>
+                                <p className="text-emerald-100/90 font-medium">Hantera ditt produktsortiment effektivt.</p>
+                            </div>
+                        </div>
+                        
+                        <div className="grid grid-cols-3 divide-x divide-stone-100 border-b border-stone-100">
+                            <div className="p-8 text-center group hover:bg-stone-50 transition-colors cursor-default">
+                                <div className="text-4xl font-bold text-stone-800 mb-1 serif-font">{products.length}</div>
+                                <div className="text-xs font-bold text-stone-400 uppercase tracking-widest">Totalt antal</div>
+                            </div>
+                            <div className="p-8 text-center group hover:bg-emerald-50/50 transition-colors cursor-default">
+                                <div className="text-4xl font-bold text-emerald-700 mb-1 serif-font">{completedCount}</div>
+                                <div className="text-xs font-bold text-emerald-700/60 uppercase tracking-widest">Klara & Redo</div>
+                            </div>
+                            <div className="p-8 text-center group hover:bg-amber-50/50 transition-colors cursor-default">
+                                <div className="text-4xl font-bold text-amber-600 mb-1 serif-font">{incompleteCount}</div>
+                                <div className="text-xs font-bold text-amber-600/60 uppercase tracking-widest">Att åtgärda</div>
+                            </div>
+                        </div>
+                        
+                        <div className="bg-stone-50 p-4 text-center border-b border-stone-100 text-sm text-stone-500">
+                            <span className="font-semibold text-stone-700">{missingImageCount}</span> produkter saknade bild från start.
+                        </div>
+
+                        <div className="p-8 grid md:grid-cols-2 gap-6 bg-white">
+                            <button onClick={startBatchMode} className="flex items-center justify-center gap-4 bg-emerald-900 hover:bg-emerald-800 text-white p-6 rounded-xl shadow-lg hover:shadow-emerald-900/20 transition-all hover:-translate-y-1 group border border-emerald-800">
+                                <div className="bg-emerald-800 p-3 rounded-full group-hover:bg-emerald-700 transition-colors">
+                                  <PlayCircle size={32} className="text-amber-400" />
+                                </div>
+                                <div className="text-left">
+                                    <div className="font-bold text-xl serif-font">Fortsätt arbeta</div>
+                                    <div className="text-emerald-200 text-sm">Starta batch eller granska</div>
+                                </div>
+                            </button>
+
+                            <button onClick={() => setStep(AppStep.EXPORT)} className="flex items-center justify-center gap-4 bg-white border-2 border-stone-200 hover:border-emerald-500 text-stone-700 p-6 rounded-xl transition-all hover:bg-emerald-50/30 group">
+                                <div className="bg-stone-100 p-3 rounded-full group-hover:bg-white group-hover:text-emerald-600 transition-colors">
+                                  <Download size={32} />
+                                </div>
+                                <div className="text-left">
+                                    <div className="font-bold text-xl serif-font group-hover:text-emerald-900">Ladda ner CSV</div>
+                                    <div className="text-stone-400 text-sm group-hover:text-emerald-700/70">Exportera färdigt material</div>
+                                </div>
+                            </button>
+
+                            <button onClick={() => setStep(AppStep.UPLOAD)} className="flex items-center justify-center gap-4 bg-white border-2 border-stone-200 hover:border-blue-300 text-stone-700 p-6 rounded-xl transition-all hover:bg-blue-50/30 group">
+                                <div className="bg-stone-100 p-3 rounded-full group-hover:bg-white group-hover:text-blue-600 transition-colors">
+                                  <UploadCloud size={32} />
+                                </div>
+                                <div className="text-left">
+                                    <div className="font-bold text-xl serif-font group-hover:text-blue-900">Uppdatera lista</div>
+                                    <div className="text-stone-400 text-sm group-hover:text-blue-700/70">Ladda upp nya produkter</div>
+                                </div>
+                            </button>
+                            
+                            <div className="flex flex-col gap-3">
+                                <button onClick={() => setStep(AppStep.CONFIGURE)} className="flex-1 flex items-center justify-center gap-3 bg-stone-50 border border-stone-200 hover:bg-stone-100 text-stone-600 p-3 rounded-xl transition-all text-sm font-medium hover:text-stone-900">
+                                    <Settings size={18} /> Inställningar & API
+                                </button>
+                                <div className="flex gap-3">
+                                  <button onClick={resetToDefault} className="flex-1 flex items-center justify-center gap-3 bg-stone-50 border border-stone-200 hover:bg-stone-100 text-stone-600 p-3 rounded-xl transition-all text-sm font-medium hover:text-stone-900">
+                                      <Database size={18} /> Återställ Data
+                                  </button>
+                                  <button onClick={resetApp} className="flex-1 flex items-center justify-center gap-3 bg-white border border-red-100 hover:bg-red-50 text-red-400 p-3 rounded-xl transition-all text-sm font-medium hover:text-red-600 hover:border-red-200">
+                                      <Trash2 size={18} /> Rensa
+                                  </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {step === AppStep.UPLOAD && <CSVEditor onConfirm={handleCSVImport} isMergeMode={products.length > 0} />}
+            {step === AppStep.CONFIGURE && <CloudinaryConfig onConfigured={handleConfigDone} onSkip={handleConfigDone} />}
+            {step === AppStep.MODE_SELECT && (
+              <div className="max-w-3xl mx-auto mt-12 p-8 bg-white rounded-2xl shadow-sm border border-stone-200 text-center">
+                  <h2 className="text-3xl font-bold mb-8 text-emerald-950 serif-font">Hur vill du bearbeta {incompleteCount} produkter?</h2>
+                  <div className="grid md:grid-cols-2 gap-6">
+                      <button onClick={startBatchMode} className="bg-stone-50 hover:bg-emerald-50 border-2 border-stone-200 hover:border-emerald-500 rounded-xl p-8 text-left transition-all group">
+                          <div className="w-14 h-14 bg-white border border-stone-200 text-emerald-600 rounded-full flex items-center justify-center mb-6 group-hover:scale-110 transition-transform shadow-sm">
+                              <Rocket size={28} />
+                          </div>
+                          <h3 className="text-xl font-bold text-emerald-900 mb-2 serif-font">🚀 Batch-läge (Auto)</h3>
+                          <p className="text-stone-500 text-sm leading-relaxed">Appen söker och sparar bilder automatiskt i bakgrunden.</p>
+                      </button>
+                      <button onClick={startManualMode} className="bg-stone-50 hover:bg-amber-50 border-2 border-stone-200 hover:border-amber-500 rounded-xl p-8 text-left transition-all group">
+                          <div className="w-14 h-14 bg-white border border-stone-200 text-amber-600 rounded-full flex items-center justify-center mb-6 group-hover:scale-110 transition-transform shadow-sm">
+                              <Hand size={28} />
+                          </div>
+                          <h3 className="text-xl font-bold text-emerald-900 mb-2 serif-font">⚡ Manuellt läge</h3>
+                          <p className="text-stone-500 text-sm leading-relaxed">Du väljer bästa bilden. Appen för-laddar nästa bild blixtsnabbt.</p>
+                      </button>
+                  </div>
+                  <div className="mt-8">
+                      <button onClick={() => setStep(AppStep.DASHBOARD)} className="text-stone-400 hover:text-emerald-800 text-sm font-medium border-b border-transparent hover:border-emerald-800 transition-all">Tillbaka till Dashboard</button>
+                  </div>
+              </div>
+            )}
+            {step === AppStep.BATCH && <BatchModeView products={products} onComplete={handleBatchComplete} onCancel={() => setStep(AppStep.DASHBOARD)} />}
+            {step === AppStep.PROCESS && currentProduct && (
+              <div className="h-full flex flex-col"><ImageWorkflow key={currentProduct.id} product={currentProduct} onComplete={handleProductComplete} onSkip={handleProductSkip} /></div>
+            )}
+            {step === AppStep.EXPORT && <ExportView products={products} onReset={() => setStep(AppStep.DASHBOARD)} />}
+          </div>
+        </main>
+        <DebugConsole />
+      </div>
+    </ErrorBoundary>
   );
 };
 
