@@ -6,6 +6,8 @@ import { CloudinaryConfig } from './components/CloudinaryConfig';
 import { BatchModeView } from './components/BatchModeView';
 import { DebugConsole } from './components/DebugConsole';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { ProgressStepper } from './components/ProgressStepper';
+import { BackButton } from './components/BackButton';
 import { Product, ProcessedProduct, AppStep } from './types';
 import { searchProductImages } from './geminiService';
 import { saveState, loadState, hasSavedState, clearState, getMeta } from './storageService';
@@ -161,6 +163,16 @@ const App: React.FC = () => {
       setStep(AppStep.PROCESS);
   };
 
+  const handleReviewFailed = (failedProducts: ProcessedProduct[]) => {
+      setReviewFilter('incomplete');
+      // Ensure we are viewing the first failed product
+      const firstFailedIndex = products.findIndex(p => p.status === 'failed');
+      if (firstFailedIndex !== -1) {
+          setCurrentIndex(firstFailedIndex);
+      }
+      setStep(AppStep.PROCESS);
+  };
+
   const handleProductComplete = (imageUrl: string) => {
     const updated = [...products];
     updated[currentIndex].finalImageUrl = imageUrl;
@@ -241,6 +253,17 @@ const App: React.FC = () => {
     }
   };
 
+  const goBack = () => {
+    switch (step) {
+      case AppStep.CONFIGURE: setStep(AppStep.UPLOAD); break;
+      case AppStep.MODE_SELECT: setStep(AppStep.CONFIGURE); break;
+      case AppStep.BATCH: setStep(AppStep.MODE_SELECT); break;
+      case AppStep.PROCESS: setStep(AppStep.MODE_SELECT); break;
+      case AppStep.EXPORT: setStep(AppStep.MODE_SELECT); break;
+      default: break;
+    }
+  };
+
   const progress = products.length > 0 ? ((currentIndex + 1) / products.length) * 100 : 0;
   const currentProduct = products[currentIndex];
   const incompleteCount = products.filter(p => p.status !== 'completed').length;
@@ -317,9 +340,19 @@ const App: React.FC = () => {
           )}
         </header>
 
+        {/* STEPPER */}
+        {step !== AppStep.UPLOAD && step !== AppStep.DASHBOARD && (
+            <ProgressStepper currentStep={step} />
+        )}
+
         <main className="flex-1 p-4 md:p-8 overflow-hidden flex flex-col">
           <div className="flex-1 max-w-7xl mx-auto w-full h-full">
             
+            {/* BACK BUTTON */}
+            {step !== AppStep.DASHBOARD && step !== AppStep.UPLOAD && step !== AppStep.PROCESS && (
+                <BackButton onClick={goBack} />
+            )}
+
             {/* --- DASHBOARD VIEW --- */}
             {step === AppStep.DASHBOARD && (
                 <div className="max-w-5xl mx-auto mt-6">
@@ -426,7 +459,14 @@ const App: React.FC = () => {
                   </div>
               </div>
             )}
-            {step === AppStep.BATCH && <BatchModeView products={products} onComplete={handleBatchComplete} onCancel={() => setStep(AppStep.DASHBOARD)} />}
+            {step === AppStep.BATCH && (
+                <BatchModeView 
+                    products={products} 
+                    onComplete={handleBatchComplete} 
+                    onCancel={() => setStep(AppStep.DASHBOARD)}
+                    onReviewFailed={handleReviewFailed}
+                />
+            )}
             {step === AppStep.PROCESS && currentProduct && (
               <div className="h-full flex flex-col"><ImageWorkflow key={currentProduct.id} product={currentProduct} onComplete={handleProductComplete} onSkip={handleProductSkip} /></div>
             )}

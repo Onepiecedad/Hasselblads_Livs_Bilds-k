@@ -4,6 +4,7 @@ import { searchProductImages, editProductImage, urlToBase64 } from '../geminiSer
 import { uploadToCloudinary, isCloudinaryConfigured } from '../cloudinaryService';
 import { TEMPLATES } from '../constants';
 import { Image as ImageIcon, Loader2, ArrowRight, SkipForward, AlertCircle, Wand2, RefreshCw, Upload, LayoutTemplate, ImageOff, Search, Save, X, Plus, CheckCircle2 } from 'lucide-react';
+import { KeyboardHints } from './KeyboardHints';
 
 interface ImageWorkflowProps {
   product: ProcessedProduct;
@@ -80,6 +81,12 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
   const resultsContainerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  const shortcuts = [
+      { key: '1-9', action: 'Välj bild' },
+      { key: 'Enter', action: 'Spara & Nästa' },
+      { key: '→', action: 'Hoppa över' },
+  ];
 
   useEffect(() => {
     let initialResults: SearchResult[] = [];
@@ -347,6 +354,7 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
              </button>
            )}
         </div>
+        <KeyboardHints shortcuts={shortcuts} />
       </div>
     );
   }

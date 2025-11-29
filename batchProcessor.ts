@@ -24,7 +24,7 @@ export interface BatchResult {
 }
 
 // Increased timeout to allow for search retries AND generation fallback
-const PRODUCT_TIMEOUT_MS = 90000; // 90 seconds per product
+const PRODUCT_TIMEOUT_MS = 30000; // 30 seconds per product (Reduced to fail fast)
 
 export async function runBatchProcess(
   products: Product[],
@@ -33,12 +33,14 @@ export async function runBatchProcess(
     delayBetweenProducts?: number;
     skipExistingImages?: boolean;
     abortSignal?: AbortSignal;
+    onImageResult?: (product: Product, imageUrl: string | null) => void;
   } = {}
 ): Promise<BatchResult> {
   const {
     delayBetweenProducts = 2000,
     skipExistingImages = true,
-    abortSignal
+    abortSignal,
+    onImageResult
   } = options;
 
   logger.info(`Starting batch process for ${products.length} products`, { options });
@@ -80,11 +82,17 @@ export async function runBatchProcess(
     try {
         const processPromise = processSingleProduct(product, skipExistingImages);
         const timeoutPromise = new Promise<ProcessedProduct>((_, reject) => 
-            setTimeout(() => reject(new Error('Operation timed out (90s)')), PRODUCT_TIMEOUT_MS)
+            setTimeout(() => reject(new Error('Operation timed out (30s)')), PRODUCT_TIMEOUT_MS)
         );
 
         result = await Promise.race([processPromise, timeoutPromise]);
         
+        // Notify live preview
+        if (onImageResult) {
+            const img = result.finalImageUrl || result.cloudinaryUrl || null;
+            onImageResult(result, img);
+        }
+
         results.push(result);
         if (result.status === 'completed') {
             if (result.imageSource === 'csv') skipped++; // Counted as skipped in context of "AI generation" but completed work
@@ -108,12 +116,25 @@ export async function runBatchProcess(
         }
 
     } catch (error: any) {
+        // Robust error message extraction
         let errMsg = 'Unknown error';
-        if (typeof error === 'string') errMsg = error;
-        else if (error instanceof Error) errMsg = error.message;
-        else if (typeof error === 'object') errMsg = JSON.stringify(error, Object.getOwnPropertyNames(error));
+        try {
+            if (typeof error === 'string') {
+                errMsg = error;
+            } else if (error instanceof Error) {
+                errMsg = error.message;
+            } else if (typeof error === 'object' && error !== null) {
+                // Try to extract message property or stringify
+                errMsg = (error as any).message || JSON.stringify(error);
+                if (errMsg === '{}') errMsg = String(error);
+            } else {
+                errMsg = String(error);
+            }
+        } catch (e) {
+            errMsg = 'Error could not be stringified';
+        }
 
-        logger.error(`Timeout/Error processing ${product.product_name}`, { message: errMsg });
+        logger.error(`Product failed: ${product.product_name}`, { reason: errMsg });
         
         result = {
             ...product,
@@ -121,6 +142,7 @@ export async function runBatchProcess(
             processingError: errMsg
         };
         results.push(result);
+        if (onImageResult) onImageResult(result, null);
         failed++;
     }
 
@@ -275,7 +297,7 @@ async function processSingleProduct(product: ProcessedProduct, skipExistingImage
     }
 
     const errorMsg = 'All strategies exhausted: CSV upload failed, Search found no valid images, Generation not attempted or failed';
-    logger.error(`Product failed: ${product.product_name}`, { reason: errorMsg });
+    // logger.error(`Product failed: ${product.product_name}`, { reason: errorMsg }); // Removed duplicate logging
 
     return {
         ...product,

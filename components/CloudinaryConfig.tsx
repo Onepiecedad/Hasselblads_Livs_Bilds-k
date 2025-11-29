@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Cloud, ExternalLink, ArrowRight, Search, Settings, Check } from 'lucide-react';
+import { Cloud, ExternalLink, ArrowRight, Search, Settings, Check, Edit2 } from 'lucide-react';
 import { setCloudinaryConfig, isCloudinaryConfigured } from '../cloudinaryService';
 import { setSearchConfig } from '../geminiService';
 
@@ -8,8 +8,6 @@ interface CloudinaryConfigProps {
   onSkip: () => void;
 }
 
-// Uppdaterade med dina nycklar från skärmdumparna
-// OBS: Rättat stavfel Alza -> AIza (Stort i)
 const DEFAULT_GOOGLE_API_KEY = 'AIzaSyAtSpe9Rm7Nm-SDQlM5utxWijbl_L3UG-o';
 const DEFAULT_GOOGLE_CX = 'b446eed8fbf424c0f';
 
@@ -20,14 +18,19 @@ export const CloudinaryConfig: React.FC<CloudinaryConfigProps> = ({ onConfigured
   const [googleCx, setGoogleCx] = useState(DEFAULT_GOOGLE_CX);
   const [saved, setSaved] = useState(false);
   const [activeTab, setActiveTab] = useState<'cloudinary' | 'search'>('cloudinary');
+  
+  const [hasExistingConfig, setHasExistingConfig] = useState(false);
+  const [showForm, setShowForm] = useState(false);
 
   useEffect(() => {
     const savedCloudName = localStorage.getItem('cloudinary_cloud_name');
     const savedPreset = localStorage.getItem('cloudinary_upload_preset');
+    
     if (savedCloudName && savedPreset) {
       setCloudName(savedCloudName);
       setUploadPreset(savedPreset);
       setCloudinaryConfig(savedCloudName, savedPreset);
+      setHasExistingConfig(true);
     } else {
         setCloudinaryConfig('da7wmiyra', 'woocom_upload');
     }
@@ -35,7 +38,6 @@ export const CloudinaryConfig: React.FC<CloudinaryConfigProps> = ({ onConfigured
     const savedApiKey = localStorage.getItem('google_search_api_key');
     const savedCx = localStorage.getItem('google_search_cx');
     
-    // Använd sparade nycklar om de finns, annars dina nya defaults
     const apiKeyToUse = savedApiKey || DEFAULT_GOOGLE_API_KEY;
     const cxToUse = savedCx || DEFAULT_GOOGLE_CX;
 
@@ -56,12 +58,51 @@ export const CloudinaryConfig: React.FC<CloudinaryConfigProps> = ({ onConfigured
     if (googleCx.trim()) localStorage.setItem('google_search_cx', googleCx.trim());
     if (googleApiKey.trim() && googleCx.trim()) setSearchConfig(googleApiKey.trim(), googleCx.trim());
     setSaved(true);
+    setShowForm(false);
+    setHasExistingConfig(true);
   };
 
   const handleContinue = () => {
       if(isCloudinaryConfigured()) onConfigured();
   };
 
+  // --- SHORTCUT VIEW IF CONFIGURED ---
+  if (hasExistingConfig && !showForm) {
+      return (
+        <div className="max-w-xl mx-auto mt-12 bg-white rounded-2xl shadow-xl border border-stone-200 overflow-hidden animate-in fade-in duration-300">
+            <div className="bg-emerald-900 p-8 text-white">
+                <div className="flex items-center justify-between">
+                    <h3 className="text-2xl font-bold serif-font">Redan konfigurerad</h3>
+                    <div className="bg-emerald-800 p-2 rounded-full"><Check size={24} className="text-emerald-400" /></div>
+                </div>
+                <p className="text-emerald-200/80 mt-2">Dina inställningar är sparade och redo att användas.</p>
+            </div>
+            <div className="p-8 space-y-4">
+                <div className="flex items-center justify-between p-4 bg-stone-50 rounded-xl border border-stone-100">
+                    <div>
+                        <p className="text-xs font-bold text-stone-400 uppercase">Cloud Name</p>
+                        <p className="font-mono text-stone-700 font-bold">{cloudName}</p>
+                    </div>
+                    <div>
+                        <p className="text-xs font-bold text-stone-400 uppercase">Preset</p>
+                        <p className="font-mono text-stone-700 font-bold">{uploadPreset}</p>
+                    </div>
+                </div>
+                
+                <div className="flex gap-4 pt-2">
+                    <button onClick={() => setShowForm(true)} className="flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl border-2 border-stone-200 text-stone-600 font-bold hover:border-stone-400 hover:text-stone-800 transition-colors">
+                        <Edit2 size={16} /> Ändra
+                    </button>
+                    <button onClick={handleContinue} className="flex-[2] flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-600 text-white py-3 px-4 rounded-xl font-bold shadow-lg shadow-amber-200 transition-all hover:-translate-y-0.5">
+                        Använd dessa inställningar <ArrowRight size={18} />
+                    </button>
+                </div>
+            </div>
+        </div>
+      );
+  }
+
+  // --- FULL FORM ---
   return (
     <div className="max-w-2xl mx-auto mt-10 bg-white rounded-2xl shadow-xl border border-stone-200 overflow-hidden">
       <div className="bg-emerald-900 p-8 text-white flex items-center gap-4">
@@ -135,9 +176,11 @@ export const CloudinaryConfig: React.FC<CloudinaryConfigProps> = ({ onConfigured
             {saved ? 'Inställningar sparade' : 'Spara ändringar'}
          </button>
 
-         <button onClick={handleContinue} disabled={!isCloudinaryConfigured()} className="flex items-center gap-2 bg-amber-500 hover:bg-amber-600 disabled:bg-stone-200 disabled:text-stone-400 text-white px-8 py-3 rounded-xl font-bold shadow-lg shadow-amber-200 transition-all hover:-translate-y-0.5">
-            Starta Appen <ArrowRight size={20} />
-         </button>
+         {hasExistingConfig && (
+             <button onClick={() => setHasExistingConfig(true)} className="text-stone-400 text-sm font-bold hover:text-stone-600">
+                 Avbryt
+             </button>
+         )}
       </div>
     </div>
   );

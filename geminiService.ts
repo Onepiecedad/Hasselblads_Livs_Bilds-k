@@ -21,8 +21,24 @@ export const isSearchConfigured = () => {
     return searchConfig !== null && searchConfig.apiKey !== '' && searchConfig.cx !== '';
 };
 
-// Domains to explicitly ignore
-const BLOCKED_DOMAINS: string[] = [];
+// Domains to explicitly ignore to avoid generic/encyclopedia images
+const BLOCKED_DOMAINS: string[] = [
+  'wikipedia.org',
+  'wiktionary.org',
+  'britannica.com',
+  'ne.se',
+  'snl.no',
+  'encyclopedia.com',
+  'merriam-webster.com',
+  'dictionary.com',
+  'istockphoto.com',
+  'shutterstock.com',
+  'gettyimages',
+  '123rf.com',
+  'alamy.com',
+  'dreamstime.com',
+  'vectorstock.com'
+];
 
 // Priority domains for Swedish grocery context
 const SWEDISH_GROCERY_CONTEXT = `
@@ -33,7 +49,6 @@ Prioritize finding images from these retailers if possible:
 
 /**
  * Helper to check if a URL looks like a VALID product image.
- * PERMISSIVE MODE: Defaults to TRUE unless explicitly known to be bad (vectors, icons).
  */
 const isLikelyImageUrl = (url: string): boolean => {
   if (!url) return false;
@@ -85,17 +100,16 @@ const extractUrlsByRegex = (text: string): SearchResult[] => {
 };
 
 /**
- * Cleans the product name from logistical noise but KEEPS semantic visual identifiers.
+ * Cleans the product name from logistical noise.
+ * NEW STRATEGY: Do NOT expand with "product/fruit". Keep it simple.
  */
 const cleanSearchQuery = (name: string): string => {
     let clean = name;
     
-    // Remove ONLY purely logistical terms/dates that confuse the search
+    // Remove logistical terms/dates
     const badWords = [
-        'i morgon', 'idag', 'imorgon', 'i övermorgon', 'övermorgon', // Delivery terms
-        'vikt', 'kg', 'fp', 'förp', 'pack', 'st', // Logistical units
-        'ursprung', 'sverige', 'holland', 'spanien', // Origins
-        'klass 1', 'kl 1', 'klass1' // Grading
+        'i morgon', 'idag', 'imorgon', 'i övermorgon', 'övermorgon', 
+        'vikt', 'kg', 'fp', 'förp', 'pack', 'st', 'klass 1', 'kl 1', 'klass1'
     ];
 
     badWords.forEach(word => {
@@ -103,43 +117,19 @@ const cleanSearchQuery = (name: string): string => {
         clean = clean.replace(regex, '');
     });
 
-    // Specific fix for "1st", "2st" etc which are common in Swedish
-    clean = clean.replace(/\b\d+st\b/gi, '');
+    // Remove specific quantity patterns like "1st", "2kg"
+    clean = clean.replace(/\b\d+\s*(kg|g|st|förp|pack|ml|cl|l|dl)\b/gi, '');
+    
+    // Remove countries to avoid map images or flags
+    clean = clean.replace(/\b(sverige|spanien|holland|italien|frankrike|tyskland|polen|marocko|israel|sydafrika|kenya|peru|chile|ecuador|costa rica|dominikanska republiken)\b/gi, '');
 
     clean = clean.replace(/[^a-zA-Z0-9åäöÅÄÖ\-\s]/g, '');
     return clean.replace(/\s+/g, ' ').trim();
 };
 
 const optimizeQuery = (query: string): string => {
-    const cleaned = cleanSearchQuery(query);
-    const lower = cleaned.toLowerCase();
-    const words = cleaned.split(/\s+/).filter(w => w.trim().length > 0);
-    
-    // Utökad lista på generiska items som ofta returnerar Wikipedia
-    const generics = [
-        'apelsin', 'banan', 'äpple', 'päron', 'tomat', 'gurka', 'potatis', 'lök', 
-        'morot', 'citron', 'lime', 'mango', 'avokado', 'paprika', 'kål', 'sallad', 
-        'melon', 'druvor', 'jordgubbar', 'hallon', 'blåbär', 'körsbär', 'plommon',
-        'broccoli', 'spenat', 'selleri', 'purjolök', 'vitlök', 'ingefära', 'dill',
-        'persilja', 'basilika', 'oregano', 'timjan', 'rosmarin', 'mynta', 'koriander',
-        'ananas', 'kiwi', 'fikon', 'dadlar', 'oliver', 'kapris', 'champinjoner',
-        'zucchini', 'aubergine', 'fänkål', 'rödbetor', 'palsternacka', 'rädisor'
-    ];
-    
-    // Om det är 1-2 ord och matchar generisk mat, lägg till kontext
-    if (words.length <= 2) {
-        const isGeneric = generics.some(g => lower.includes(g));
-        if (isGeneric) {
-            return `${cleaned} frukt grönsak produkt butik`;
-        }
-    }
-    
-    // Om query är väldigt kort, lägg till kontext
-    if (cleaned.length < 10) {
-        return `${cleaned} produkt`;
-    }
-    
-    return cleaned;
+    // New simplified strategy: Just clean, don't expand.
+    return cleanSearchQuery(query);
 };
 
 /**
@@ -165,13 +155,12 @@ const searchViaCSE = async (query: string): Promise<SearchResult[]> => {
     logger.info(`[CSE Search] Query: "${query}"`);
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000); // 8s timeout for search response
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
 
     try {
         const response = await fetch(`${endpoint}?${params.toString()}`, { signal: controller.signal });
         
         if (!response.ok) {
-            // Read the detailed error body from Google
             let errorDetails = '';
             try {
                 const errJson = await response.json();
@@ -191,11 +180,14 @@ const searchViaCSE = async (query: string): Promise<SearchResult[]> => {
         const data = await response.json();
         if (!data.items) return [];
 
-        return data.items.map((item: any) => ({
-            url: item.link, // Correct: direct image link
-            title: item.title || item.snippet || 'CSE Result',
-            source: item.displayLink || 'Google Search'
-        })).filter((r: SearchResult) => isLikelyImageUrl(r.url));
+        // Apply domain blocking immediately via isLikelyImageUrl
+        return data.items
+            .filter((item: any) => isLikelyImageUrl(item.link))
+            .map((item: any) => ({
+                url: item.link, 
+                title: item.title || item.snippet || 'CSE Result',
+                source: item.displayLink || 'Google Search'
+            }));
     } finally {
         clearTimeout(timeoutId);
     }
@@ -212,11 +204,10 @@ export const searchProductImages = async (
   customQuery?: string
 ): Promise<SearchResult[]> => {
   
-  // Use the optimized query builder
   const optimizedName = optimizeQuery(productName);
   let queryToUse = customQuery || optimizedName;
 
-  // If we have a brand and it's not custom query, check if we should append it
+  // Append brand if it helps, but keep query simple
   if (!customQuery && brand && brand.trim() !== '') {
       const cleanBrand = cleanSearchQuery(brand);
       if (!optimizedName.toLowerCase().includes(cleanBrand.toLowerCase())) {
@@ -230,8 +221,8 @@ export const searchProductImages = async (
           let results = await searchViaCSE(queryToUse);
           
           if (results.length < 2 && !customQuery) {
-             const noun = optimizedName.split(' ')[0];
-             const broadQuery = `${noun} ${brand} produkt`;
+             // Fallback: If minimal results, try adding "produkt" just in case, but usually simple is better
+             const broadQuery = `${optimizedName} produkt`;
              logger.info(`[CSE] Few results, trying broad: "${broadQuery}"`);
              try {
                 const broadResults = await searchViaCSE(broadQuery);
@@ -406,25 +397,36 @@ export const urlToBase64 = async (url: string, timeoutMs: number = 8000): Promis
   const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(url)}`;
 
   const tryFetch = async (targetUrl: string): Promise<Blob> => {
-    const response = await fetch(targetUrl, { signal: controller.signal });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    try {
+        const response = await fetch(targetUrl, { signal: controller.signal });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-    const contentType = response.headers.get('content-type') || '';
-    if (contentType.includes('text/html') || contentType.includes('application/xhtml')) {
-      throw new Error('URL_IS_HTML');
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('text/html') || contentType.includes('application/xhtml')) {
+            throw new Error('URL_IS_HTML');
+        }
+
+        const blob = await response.blob();
+
+        // Validera att blob faktiskt är en bild
+        if (!blob.type.startsWith('image/')) {
+            // Om blob är stor och inte markerad som bild, troligen HTML/annat
+            if (blob.size > 100000) {
+                throw new Error('INVALID_IMAGE_DATA');
+            }
+        }
+        
+        // Safety check for content length if available
+        const size = response.headers.get('content-length');
+        if (size && parseInt(size) > 5 * 1024 * 1024) { // 5MB limit
+             throw new Error('IMAGE_TOO_LARGE');
+        }
+
+        return blob;
+    } catch (e: any) {
+        if (e.name === 'AbortError') throw new Error('TIMEOUT');
+        throw e;
     }
-
-    const blob = await response.blob();
-
-    // Validera att blob faktiskt är en bild
-    if (!blob.type.startsWith('image/')) {
-      // Om blob är stor och inte markerad som bild, troligen HTML/annat
-      if (blob.size > 100000) {
-        throw new Error('INVALID_IMAGE_DATA');
-      }
-    }
-
-    return blob;
   };
 
   try {
@@ -436,9 +438,11 @@ export const urlToBase64 = async (url: string, timeoutMs: number = 8000): Promis
       logger.info(`Direct fetch succeeded for ${url.substring(0, 50)}...`);
     } catch (directError: any) {
       // Om det är HTML eller timeout, kasta vidare direkt
-      if (directError.message === 'URL_IS_HTML' || 
-          directError.message === 'INVALID_IMAGE_DATA' ||
-          directError.name === 'AbortError') {
+      const msg = directError.message || '';
+      if (msg === 'URL_IS_HTML' || 
+          msg === 'INVALID_IMAGE_DATA' ||
+          msg === 'IMAGE_TOO_LARGE' ||
+          msg === 'TIMEOUT') {
         throw directError;
       }
 
@@ -449,10 +453,11 @@ export const urlToBase64 = async (url: string, timeoutMs: number = 8000): Promis
         logger.info(`Proxy fetch succeeded`);
       } catch (proxyError: any) {
         // Om proxy också misslyckas, kasta ursprungliga felet eller proxy-felet
-        if (proxyError.message === 'URL_IS_HTML' || proxyError.message === 'INVALID_IMAGE_DATA') {
+        const pMsg = proxyError.message || '';
+        if (pMsg === 'URL_IS_HTML' || pMsg === 'INVALID_IMAGE_DATA' || pMsg === 'IMAGE_TOO_LARGE') {
           throw proxyError;
         }
-        throw new Error(`CORS_ERROR: Both direct and proxy failed`);
+        throw new Error(`CORS_ERROR: Both direct and proxy failed. ${pMsg}`);
       }
     }
 
