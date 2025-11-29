@@ -4,23 +4,42 @@ import { logger } from './logger';
 const STORAGE_KEY = 'woocom_automator_products';
 const META_KEY = 'woocom_automator_meta';
 
-export const saveState = (products: ProcessedProduct[]) => {
+export const saveState = (products: ProcessedProduct[]): { success: boolean; error?: string } => {
     try {
         // Optimization: Don't save prefetched results to save space
         const cleanProducts = products.map(p => {
             const { prefetchedResults, ...rest } = p;
             return rest;
         });
-        
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(cleanProducts));
-        localStorage.setItem(META_KEY, JSON.stringify({ 
-            lastSaved: Date.now(), 
+
+        const dataString = JSON.stringify(cleanProducts);
+        const metaString = JSON.stringify({
+            lastSaved: Date.now(),
             count: products.length,
             completed: products.filter(p => p.status === 'completed').length
-        }));
-    } catch (e) {
+        });
+
+        // Check if we have enough space (estimate)
+        const estimatedSize = dataString.length + metaString.length;
+        const maxSize = 5 * 1024 * 1024; // 5MB typical localStorage limit
+
+        if (estimatedSize > maxSize) {
+            const errorMsg = 'Data är för stor för att sparas lokalt. Exportera till CSV istället.';
+            logger.error(errorMsg);
+            return { success: false, error: errorMsg };
+        }
+
+        localStorage.setItem(STORAGE_KEY, dataString);
+        localStorage.setItem(META_KEY, metaString);
+        return { success: true };
+    } catch (e: any) {
+        const errorMsg = e.name === 'QuotaExceededError'
+            ? 'Lagringsutrymmet är fullt. Rensa webbläsarens cache eller exportera data till CSV.'
+            : 'Kunde inte spara automatiskt. Kontrollera webbläsarinställningar.';
+
         console.error('Failed to save state to localStorage', e);
-        logger.warn('Kunde inte spara automatiskt. Lagringsutrymmet kan vara fullt.');
+        logger.error(errorMsg);
+        return { success: false, error: errorMsg };
     }
 };
 

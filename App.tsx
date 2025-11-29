@@ -64,8 +64,15 @@ const App: React.FC = () => {
   // --- PREFETCHING ---
   useEffect(() => {
     if (step !== AppStep.PROCESS) return;
+
+    let isMounted = true;
+    let isPrefetching = false;
     const PREFETCH_WINDOW = 10;
+
     const runPrefetch = async () => {
+        if (isPrefetching) return; // Prevent concurrent prefetch runs
+        isPrefetching = true;
+
         const indicesToFetch: number[] = [];
         let count = 0;
         let lookAhead = 1;
@@ -83,29 +90,42 @@ const App: React.FC = () => {
             }
             lookAhead++;
         }
-        if (indicesToFetch.length === 0) return;
+        if (indicesToFetch.length === 0) {
+            isPrefetching = false;
+            return;
+        }
         indicesToFetch.forEach(idx => prefetchingRef.current.add(products[idx].id));
 
         for (const idx of indicesToFetch) {
             const product = products[idx];
             try {
-                if (!prefetchingRef.current.has(product.id)) continue;
+                if (!prefetchingRef.current.has(product.id) || !isMounted) continue;
                 const results = await searchProductImages(product.product_name, product.brand, product.description);
-                setProducts(prev => prev.map(p => {
-                    if (p.id === product.id) {
-                        return { ...p, prefetchedResults: results };
-                    }
-                    return p;
-                }));
+                if (isMounted) {
+                    setProducts(prev => prev.map(p => {
+                        if (p.id === product.id) {
+                            return { ...p, prefetchedResults: results };
+                        }
+                        return p;
+                    }));
+                }
             } catch (e) {
                 console.warn(`Prefetch failed for ${product.product_name}`, e);
             } finally {
                 prefetchingRef.current.delete(product.id);
             }
         }
+        isPrefetching = false;
     };
+
     runPrefetch();
-  }, [currentIndex, step, products, filterOriginalImages]);
+
+    return () => {
+      isMounted = false;
+      // Clear prefetching ref on unmount
+      prefetchingRef.current.clear();
+    };
+  }, [currentIndex, step, filterOriginalImages]);
 
   // --- HANDLERS (Same logic, updated styling below) ---
   const handleCSVImport = (newProducts: Product[], mergeMode: boolean) => {

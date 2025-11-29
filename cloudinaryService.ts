@@ -45,6 +45,17 @@ export async function uploadToCloudinary(imageData: string): Promise<string> {
     throw new Error('Cloudinary not configured. Call setCloudinaryConfig first.');
   }
 
+  // Validate image size for base64 data
+  if (imageData.startsWith('data:')) {
+    const base64Length = imageData.split(',')[1]?.length || 0;
+    const sizeInBytes = (base64Length * 3) / 4; // Approximate size
+    const maxSize = 10 * 1024 * 1024; // 10MB limit
+
+    if (sizeInBytes > maxSize) {
+      throw new Error('Image too large (max 10MB). Please choose a smaller image.');
+    }
+  }
+
   const formData = new FormData();
   formData.append('file', imageData);
   formData.append('upload_preset', config.uploadPreset);

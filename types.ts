@@ -4,7 +4,9 @@ export interface Product {
   description: string;
   brand?: string; // Brand/Manufacturer
   initialImages?: string[]; // Images found in the CSV
-  [key: string]: any; // Allow other CSV columns
+  'Artikelnummer'?: string; // Swedish article number
+  sku?: string; // Stock keeping unit
+  additionalData?: Record<string, string | number | boolean | null | undefined>; // Other CSV columns
 }
 
 export interface ProcessedProduct extends Product {

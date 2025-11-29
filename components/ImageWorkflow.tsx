@@ -65,7 +65,7 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
   const [step, setStep] = useState<'SEARCH' | 'EDIT' | 'TEMPLATES'>('SEARCH');
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [isSaving, setIsSaving] = useState(false); 
+  const [isSaving, setIsSaving] = useState(false);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [selectedImageUrl, setSelectedImageUrl] = useState<string | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
@@ -81,6 +81,8 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
   const resultsContainerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const isMountedRef = useRef(true);
 
   const shortcuts = [
       { key: '1-9', action: 'Välj bild' },
@@ -89,6 +91,8 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
   ];
 
   useEffect(() => {
+    isMountedRef.current = true;
+
     let initialResults: SearchResult[] = [];
     if (product.prefetchedResults && product.prefetchedResults.length > 0) {
         initialResults = product.prefetchedResults;
@@ -101,7 +105,7 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
     setSearchAttempts(0);
     setStatusMsg('');
     setCustomSearchQuery(product.product_name);
-    
+
     const words = product.product_name.split(' ').filter(w => w.length > 1);
     if (product.brand) words.push(product.brand);
     const uniqueChips = [...new Set(words)].map(w => ({ label: w, active: true }));
@@ -112,6 +116,11 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
     }
     setSelectedImage(null);
     setSelectedImageUrl(null);
+
+    return () => {
+      isMountedRef.current = false;
+      abortControllerRef.current?.abort();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [product.id]);
 
@@ -129,11 +138,12 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
       };
       window.addEventListener('keydown', handleKeyDown);
       return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [searchResults, selectedImageUrl, selectedImage, step, isLoading]);
+  }, [searchResults, selectedImageUrl, selectedImage, step, isLoading, onSkip, finalizeImage]);
 
   useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, [chatMessages]);
 
   const performSearch = async (overrideQuery?: string) => {
+    if (!isMountedRef.current || isLoading) return; // Prevent duplicate searches
     setIsLoading(true);
     setError(null);
     setStatusMsg('');
@@ -142,6 +152,7 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
       const isRetry = searchAttempts > 0;
       const isCustom = queryToUse !== product.product_name;
       const results = await searchProductImages(product.product_name, product.brand, product.description, isRetry, isCustom ? queryToUse : undefined);
+      if (!isMountedRef.current) return;
       setSearchResults(prev => {
           const existingUrls = new Set(prev.map(r => r.url.toLowerCase().trim()));
           const newUnique = results.filter(r => !existingUrls.has(r.url.toLowerCase().trim()));
@@ -151,25 +162,35 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
       });
       if (results.length === 0 && searchResults.length === 0) setError("Inga bilder hittades.");
       setSearchAttempts(prev => prev + 1);
-    } catch (err) { setError("Sökning misslyckades."); } finally { setIsLoading(false); }
+    } catch (err) {
+      if (isMountedRef.current) setError("Sökning misslyckades.");
+    } finally {
+      if (isMountedRef.current) setIsLoading(false);
+    }
   };
 
   const handleImageSelect = async (url: string) => {
+    if (!isMountedRef.current) return;
     setIsLoading(true);
     setSelectedImageUrl(url);
     setIsEditable(true);
     try {
       const base64DataUri = await urlToBase64(url);
+      if (!isMountedRef.current) return;
       setSelectedImage(base64DataUri);
       setStep('EDIT');
     } catch (e: any) {
+      if (!isMountedRef.current) return;
       if (e.message === 'CORS_ERROR') {
          setSelectedImageUrl(url); setSelectedImage(null); setIsEditable(false); setStep('EDIT');
       } else { setError("Kunde inte ladda bilden."); }
-    } finally { setIsLoading(false); }
+    } finally {
+      if (isMountedRef.current) setIsLoading(false);
+    }
   };
 
   const handleChipClick = (index: number) => {
+      if (isLoading) return; // Prevent changes during search
       const newChips = [...searchChips];
       newChips[index].active = !newChips[index].active;
       setSearchChips(newChips);
@@ -193,6 +214,22 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    // Validate file size (10MB limit)
+    const maxSize = 10 * 1024 * 1024;
+    if (file.size > maxSize) {
+      setError('Filen är för stor (max 10MB). Välj en mindre bild.');
+      e.target.value = '';
+      return;
+    }
+
+    // Validate file type
+    if (!file.type.startsWith('image/')) {
+      setError('Endast bildfiler är tillåtna.');
+      e.target.value = '';
+      return;
+    }
+
     const reader = new FileReader();
     reader.onload = (event) => {
       const result = event.target?.result as string;
@@ -203,19 +240,25 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
   };
 
   const handleSendMessage = async (directPrompt?: string) => {
+    if (!isMountedRef.current) return;
     const textToSend = directPrompt || chatInput;
     if (!textToSend.trim()) return;
     if (!directPrompt) { setChatMessages(prev => [...prev, { role: 'user', text: textToSend }]); setChatInput(''); }
     setIsLoading(true);
     try {
       const newImageBase64 = await editProductImage(selectedImage, textToSend);
+      if (!isMountedRef.current) return;
       if (newImageBase64) {
-         setSelectedImage(newImageBase64); setSelectedImageUrl(null); setIsEditable(true); 
+         setSelectedImage(newImageBase64); setSelectedImageUrl(null); setIsEditable(true);
          setChatMessages(prev => [...prev, { role: 'model', text: 'Fixat! Nöjd?', image: newImageBase64, isImageGeneration: true }]);
       } else {
          setChatMessages(prev => [...prev, { role: 'model', text: 'Kunde inte generera bild. Prova igen.' }]);
       }
-    } catch (err) { setChatMessages(prev => [...prev, { role: 'model', text: 'Något gick fel.' }]); } finally { setIsLoading(false); }
+    } catch (err) {
+      if (isMountedRef.current) setChatMessages(prev => [...prev, { role: 'model', text: 'Något gick fel.' }]);
+    } finally {
+      if (isMountedRef.current) setIsLoading(false);
+    }
   };
 
   const finalizeImage = async () => {

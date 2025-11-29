@@ -24,7 +24,7 @@ export interface BatchResult {
 }
 
 // Increased timeout to allow for search retries AND generation fallback
-const PRODUCT_TIMEOUT_MS = 30000; // 30 seconds per product (Reduced to fail fast)
+const PRODUCT_TIMEOUT_MS = 60000; // 60 seconds per product
 
 export async function runBatchProcess(
   products: Product[],
@@ -81,8 +81,8 @@ export async function runBatchProcess(
     // Wrap processing in a timeout race
     try {
         const processPromise = processSingleProduct(product, skipExistingImages);
-        const timeoutPromise = new Promise<ProcessedProduct>((_, reject) => 
-            setTimeout(() => reject(new Error('Operation timed out (30s)')), PRODUCT_TIMEOUT_MS)
+        const timeoutPromise = new Promise<ProcessedProduct>((_, reject) =>
+            setTimeout(() => reject(new Error('Operation timed out (60s)')), PRODUCT_TIMEOUT_MS)
         );
 
         result = await Promise.race([processPromise, timeoutPromise]);

@@ -4,7 +4,7 @@ import { SearchResult } from "./types";
 import { logger } from "./logger";
 
 // Initialize the API client
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY || '' });
 
 // Search Config
 let searchConfig: { apiKey: string, cx: string } | null = null;
