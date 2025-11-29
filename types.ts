@@ -4,7 +4,7 @@ export interface Product {
   description: string;
   brand?: string; // Brand/Manufacturer
   initialImages?: string[]; // Images found in the CSV
-  [key: string]: any; // Allow other CSV columns
+  csvData?: Record<string, string>; // Safer container for extra CSV columns
 }
 
 export interface ProcessedProduct extends Product {
@@ -14,6 +14,7 @@ export interface ProcessedProduct extends Product {
   imageSource?: 'csv' | 'search' | 'generated' | 'edited';
   cloudinaryUrl?: string; // Explicit Cloudinary URL
   processingError?: string; // Reason for failure
+  prefetchedResults?: SearchResult[]; // Transient cache
 }
 
 export enum AppStep {

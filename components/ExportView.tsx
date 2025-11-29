@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { ProcessedProduct } from '../types';
 import { Download, CheckCircle, RefreshCcw, AlertTriangle, Cloud, ArrowRight } from 'lucide-react';
@@ -37,11 +38,11 @@ const ExportView: React.FC<ExportViewProps> = ({ products, onReset }) => {
   };
 
   return (
-    <div className="flex flex-col items-center justify-center h-full bg-white rounded-2xl shadow-xl border border-stone-200 p-10 max-w-4xl mx-auto mt-10">
+    <div className="flex flex-col items-center justify-center h-full bg-white rounded-2xl shadow-xl border border-stone-200 p-6 md:p-10 max-w-4xl mx-auto md:mt-10">
       <div className="w-24 h-24 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mb-6 shadow-sm border border-emerald-100">
         <CheckCircle size={48} />
       </div>
-      <h2 className="text-4xl font-bold text-emerald-950 mb-3 serif-font">Processen är klar</h2>
+      <h2 className="text-3xl md:text-4xl font-bold text-emerald-950 mb-3 serif-font text-center">Processen är klar</h2>
       <p className="text-stone-500 mb-10 text-center max-w-lg text-lg">
         Ditt sortiment är nu uppdaterat med nya bilder och redo för WooCommerce.
       </p>
@@ -77,11 +78,11 @@ const ExportView: React.FC<ExportViewProps> = ({ products, onReset }) => {
           </div>
       )}
 
-      <div className="flex gap-4">
-        <button onClick={onReset} className="flex items-center gap-2 px-8 py-4 rounded-xl border-2 border-stone-200 text-stone-500 hover:text-emerald-900 hover:border-emerald-900 font-bold transition-colors">
+      <div className="flex flex-col sm:flex-row gap-4 w-full sm:w-auto">
+        <button onClick={onReset} className="w-full sm:w-auto flex items-center justify-center gap-2 px-8 py-4 rounded-xl border-2 border-stone-200 text-stone-500 hover:text-emerald-900 hover:border-emerald-900 font-bold transition-colors">
           <RefreshCcw size={20} /> Tillbaka till start
         </button>
-        <button onClick={downloadCSV} className="flex items-center gap-3 bg-emerald-900 hover:bg-emerald-800 text-white px-10 py-4 rounded-xl font-bold shadow-xl shadow-emerald-900/20 transition-all hover:-translate-y-1">
+        <button onClick={downloadCSV} className="w-full sm:w-auto flex items-center justify-center gap-3 bg-emerald-900 hover:bg-emerald-800 text-white px-10 py-4 rounded-xl font-bold shadow-xl shadow-emerald-900/20 transition-all hover:-translate-y-1">
           <Download size={24} className="text-amber-400" /> Ladda ner CSV-fil
         </button>
       </div>

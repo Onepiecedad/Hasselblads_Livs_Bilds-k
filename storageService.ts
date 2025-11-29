@@ -12,15 +12,36 @@ export const saveState = (products: ProcessedProduct[]) => {
             return rest;
         });
         
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(cleanProducts));
+        const payload = JSON.stringify(cleanProducts);
+        localStorage.setItem(STORAGE_KEY, payload);
         localStorage.setItem(META_KEY, JSON.stringify({ 
             lastSaved: Date.now(), 
             count: products.length,
             completed: products.filter(p => p.status === 'completed').length
         }));
-    } catch (e) {
-        console.error('Failed to save state to localStorage', e);
-        logger.warn('Kunde inte spara automatiskt. Lagringsutrymmet kan vara fullt.');
+    } catch (e: any) {
+        if (e.name === 'QuotaExceededError' || e.code === 22) {
+             logger.warn('LocalStorage Quota Exceeded. Attempting to prune...');
+             try {
+                // Aggressive Pruning: Remove old original search results from completed items to save space
+                const prunedProducts = products.map(p => {
+                    if (p.status === 'completed') {
+                         const { originalSearchResultUrl, prefetchedResults, ...rest } = p;
+                         return rest;
+                    }
+                    const { prefetchedResults, ...rest } = p;
+                    return rest;
+                });
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(prunedProducts));
+                logger.success('Storage pruned and saved successfully.');
+                return;
+             } catch (pruneError) {
+                 logger.error('CRITICAL: Storage full even after pruning. Progress not saved.');
+             }
+        } else {
+             console.error('Failed to save state to localStorage', e);
+             logger.warn('Kunde inte spara automatiskt. Okänt fel vid lagring.');
+        }
     }
 };
 

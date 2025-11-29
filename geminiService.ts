@@ -4,27 +4,48 @@ import { SearchResult } from "./types";
 import { logger } from "./logger";
 
 // Initialize the API client
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Use a safe check for browser environments where process might be undefined
+const getEnvApiKey = () => (typeof process !== 'undefined' && process.env && process.env.API_KEY) 
+  ? process.env.API_KEY 
+  : (import.meta as any).env?.VITE_API_KEY;
+
+// Mutable client instance to allow updates from UI config
+let ai = new GoogleGenAI({ apiKey: getEnvApiKey() || '' });
+
+// SECURITY: CORS Proxy Usage
+const CORS_PROXY_BASE = "https://corsproxy.io/?";
 
 // Search Config
 let searchConfig: { apiKey: string, cx: string } | null = null;
 let cseQuotaExceeded = false; // Circuit breaker
 
 export const setSearchConfig = (apiKey: string, cx: string) => {
-    // Basic trimming to prevent copy-paste errors
-    searchConfig = { apiKey: apiKey.trim(), cx: cx.trim() };
+    const cleanKey = apiKey.trim();
+    const cleanCx = cx.trim();
+    searchConfig = { apiKey: cleanKey, cx: cleanCx };
     cseQuotaExceeded = false;
-    logger.info('Search API configured');
+    
+    // Also update the Gemini Client with this key to ensure AI features work
+    // even if env variables are missing
+    if (cleanKey) {
+        try {
+            ai = new GoogleGenAI({ apiKey: cleanKey });
+            logger.info(`Gemini Client updated with configured key.`);
+        } catch (e) {
+            logger.error('Failed to re-initialize Gemini client', e);
+        }
+    }
+    
+    logger.info(`Search API configured. Key: ${cleanKey.substring(0, 8)}... CX: ${cleanCx}`);
 };
 
 export const isSearchConfigured = () => {
     return searchConfig !== null && searchConfig.apiKey !== '' && searchConfig.cx !== '';
 };
 
-// Domains to explicitly ignore to avoid generic/encyclopedia images
+// Domains to explicitly ignore (Stock photos, Dictionaries, etc)
+// NOTE: Wikipedia removed from here to handle via specific logic below
 const BLOCKED_DOMAINS: string[] = [
-  'wikipedia.org',
-  'wiktionary.org',
   'britannica.com',
   'ne.se',
   'snl.no',
@@ -37,7 +58,19 @@ const BLOCKED_DOMAINS: string[] = [
   '123rf.com',
   'alamy.com',
   'dreamstime.com',
-  'vectorstock.com'
+  'vectorstock.com',
+  'pinterest',
+  'depositphotos',
+  'bigstockphoto.com'
+];
+
+// URLs that are technically broken for direct access (Crawler only)
+const BLOCKED_URL_PATTERNS: string[] = [
+  'lookaside.fbsbx.com',
+  'lookaside.instagram.com', 
+  'platform-lookaside',
+  '/crawler/media/',           // Facebook crawler-only URLs
+  'seo/google_widget/crawler', // Instagram crawler-only URLs
 ];
 
 // Priority domains for Swedish grocery context
@@ -50,26 +83,38 @@ Prioritize finding images from these retailers if possible:
 /**
  * Helper to check if a URL looks like a VALID product image.
  */
-const isLikelyImageUrl = (url: string): boolean => {
-  if (!url) return false;
+const isLikelyImageUrl = (url: string): { valid: boolean; reason?: string } => {
+  if (!url) return { valid: false, reason: 'Empty URL' };
   const lower = url.toLowerCase();
   
-  // 1. Blocked Domains check
-  if (BLOCKED_DOMAINS.some(domain => lower.includes(domain))) {
-      return false;
+  // 1. Block broken URL patterns (Technical blocks)
+  if (BLOCKED_URL_PATTERNS.some(pattern => lower.includes(pattern))) {
+      return { valid: false, reason: 'Broken URL pattern (Lookaside/Crawler)' };
   }
 
-  if (lower.startsWith('data:')) return false;
+  // 2. Blocked Domains check
+  const blocked = BLOCKED_DOMAINS.find(domain => lower.includes(domain));
+  if (blocked) {
+      return { valid: false, reason: `Blocked Domain: ${blocked}` };
+  }
 
-  // 2. Reject vector graphics, icons and documents
-  if (lower.endsWith('.svg') || lower.endsWith('.ico')) return false;
-  if (lower.endsWith('.pdf') || lower.endsWith('.doc') || lower.endsWith('.docx')) return false;
-  if (lower.includes('favicon') || lower.includes('logo')) return false;
+  // 3. Intelligent Wikipedia Filtering
+  // Block Article pages (wikipedia.org/wiki/) BUT Allow images (upload.wikimedia.org)
+  if (lower.includes('wikipedia.org/wiki/')) {
+      return { valid: false, reason: 'Wikipedia Article Page' };
+  }
 
-  // 3. Reject tiny thumbnails specific sizes
-  if (lower.includes('50x50') || lower.includes('32x32')) return false;
+  if (lower.startsWith('data:')) return { valid: false, reason: 'Data URI' };
 
-  return true; 
+  // 4. Reject vector graphics, icons and documents
+  if (lower.endsWith('.svg') || lower.endsWith('.ico')) return { valid: false, reason: 'Vector/Icon extension' };
+  if (lower.endsWith('.pdf') || lower.endsWith('.doc') || lower.endsWith('.docx')) return { valid: false, reason: 'Document extension' };
+  if (lower.includes('favicon') || lower.includes('logo')) return { valid: false, reason: 'Logo/Favicon in URL' };
+
+  // 5. Reject tiny thumbnails specific sizes (Strict check to avoid false positives)
+  if (lower.includes('/50x50/') || lower.includes('_50x50.') || lower.includes('.32x32.')) return { valid: false, reason: 'Thumbnail dimensions in URL' };
+
+  return { valid: true }; 
 };
 
 /**
@@ -87,7 +132,7 @@ const extractUrlsByRegex = (text: string): SearchResult[] => {
         let cleanUrl = url.replace(/["),;]$/, '');
         cleanUrl = cleanUrl.replace(/\.$/, '');
         
-        if (isLikelyImageUrl(cleanUrl)) {
+        if (isLikelyImageUrl(cleanUrl).valid) {
             validResults.push({
                 url: cleanUrl,
                 title: `Image Result ${i + 1}`,
@@ -101,7 +146,6 @@ const extractUrlsByRegex = (text: string): SearchResult[] => {
 
 /**
  * Cleans the product name from logistical noise.
- * NEW STRATEGY: Do NOT expand with "product/fruit". Keep it simple.
  */
 const cleanSearchQuery = (name: string): string => {
     let clean = name;
@@ -117,10 +161,10 @@ const cleanSearchQuery = (name: string): string => {
         clean = clean.replace(regex, '');
     });
 
-    // Remove specific quantity patterns like "1st", "2kg"
+    // Remove specific quantity patterns
     clean = clean.replace(/\b\d+\s*(kg|g|st|förp|pack|ml|cl|l|dl)\b/gi, '');
     
-    // Remove countries to avoid map images or flags
+    // Remove countries
     clean = clean.replace(/\b(sverige|spanien|holland|italien|frankrike|tyskland|polen|marocko|israel|sydafrika|kenya|peru|chile|ecuador|costa rica|dominikanska republiken)\b/gi, '');
 
     clean = clean.replace(/[^a-zA-Z0-9åäöÅÄÖ\-\s]/g, '');
@@ -128,7 +172,6 @@ const cleanSearchQuery = (name: string): string => {
 };
 
 const optimizeQuery = (query: string): string => {
-    // New simplified strategy: Just clean, don't expand.
     return cleanSearchQuery(query);
 };
 
@@ -136,7 +179,7 @@ const optimizeQuery = (query: string): string => {
  * Perform a Google Custom Search Engine (CSE) request.
  */
 const searchViaCSE = async (query: string): Promise<SearchResult[]> => {
-    if (!searchConfig) throw new Error("Search config missing");
+    if (!searchConfig || !searchConfig.apiKey) throw new Error("Search config missing or API key invalid");
     if (cseQuotaExceeded) throw new Error("CSE Quota Exceeded (Circuit Open)");
     if (!query || query.trim() === '') return [];
 
@@ -148,11 +191,11 @@ const searchViaCSE = async (query: string): Promise<SearchResult[]> => {
         searchType: 'image',
         num: '10', 
         safe: 'active',
-        gl: 'se', // Geolocation: Sweden
-        hl: 'sv'  // Host Language: Swedish
+        gl: 'se',
+        hl: 'sv'
     });
 
-    logger.info(`[CSE Search] Query: "${query}"`);
+    logger.info(`[Verbose] CSE Request: "${query}"`);
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 8000);
@@ -169,7 +212,9 @@ const searchViaCSE = async (query: string): Promise<SearchResult[]> => {
                 errorDetails = response.statusText;
             }
 
-            if (response.status === 429 || errorDetails.includes('quota')) {
+            logger.error(`[CSE] API Error: ${response.status} - ${errorDetails}`);
+
+            if (response.status === 429 || errorDetails.toLowerCase().includes('quota')) {
                 cseQuotaExceeded = true;
                 logger.warn('Google Search Quota Exceeded. Switching to Gemini only.');
             }
@@ -178,23 +223,45 @@ const searchViaCSE = async (query: string): Promise<SearchResult[]> => {
         }
 
         const data = await response.json();
-        if (!data.items) return [];
+        const rawCount = data.items?.length || 0;
+        logger.info(`[Verbose] CSE Raw items returned: ${rawCount}`);
 
-        // Apply domain blocking immediately via isLikelyImageUrl
-        return data.items
-            .filter((item: any) => isLikelyImageUrl(item.link))
-            .map((item: any) => ({
-                url: item.link, 
-                title: item.title || item.snippet || 'CSE Result',
-                source: item.displayLink || 'Google Search'
-            }));
+        if (!data.items) {
+            logger.warn(`[CSE] No items returned for "${query}"`);
+            return [];
+        }
+
+        const filtered = data.items
+            .map((item: any) => {
+                const check = isLikelyImageUrl(item.link);
+                if (!check.valid) {
+                    logger.warn(`[Verbose] Filter Blocked: ${item.link} | Reason: ${check.reason}`);
+                    return null;
+                }
+                logger.info(`[Verbose] Candidate OK: ${item.link.substring(0, 50)}...`);
+                return {
+                    url: item.link, 
+                    title: item.title || item.snippet || 'CSE Result',
+                    source: item.displayLink || 'Google Search'
+                };
+            })
+            .filter((item: any) => item !== null);
+
+        logger.success(`[CSE] Valid results after filter: ${filtered.length}`);
+        return filtered;
+
+    } catch (e: any) {
+        if (e.name === 'AbortError') {
+             logger.error(`[CSE] Search timed out for query: "${query}"`);
+        }
+        throw e;
     } finally {
         clearTimeout(timeoutId);
     }
 };
 
 /**
- * Searches for images using either Google CSE (if configured) or Gemini Grounding (Fallback).
+ * Searches for images using either Google CSE or Gemini Grounding.
  */
 export const searchProductImages = async (
   productName: string, 
@@ -207,7 +274,6 @@ export const searchProductImages = async (
   const optimizedName = optimizeQuery(productName);
   let queryToUse = customQuery || optimizedName;
 
-  // Append brand if it helps, but keep query simple
   if (!customQuery && brand && brand.trim() !== '') {
       const cleanBrand = cleanSearchQuery(brand);
       if (!optimizedName.toLowerCase().includes(cleanBrand.toLowerCase())) {
@@ -215,13 +281,12 @@ export const searchProductImages = async (
       }
   }
 
-  // --- STRATEGY 1: Google Custom Search (Preferred) ---
+  // --- STRATEGY 1: Google Custom Search ---
   if (isSearchConfigured() && !cseQuotaExceeded) {
       try {
           let results = await searchViaCSE(queryToUse);
           
           if (results.length < 2 && !customQuery) {
-             // Fallback: If minimal results, try adding "produkt" just in case, but usually simple is better
              const broadQuery = `${optimizedName} produkt`;
              logger.info(`[CSE] Few results, trying broad: "${broadQuery}"`);
              try {
@@ -235,7 +300,6 @@ export const searchProductImages = async (
           }
 
           if (results.length > 0) {
-              logger.success(`[CSE] Found ${results.length} images total`);
               return results;
           }
       } catch (cseError: any) {
@@ -245,11 +309,11 @@ export const searchProductImages = async (
       logger.info("CSE not configured, using Gemini Grounding");
   }
 
-  // --- STRATEGY 2: Gemini Grounding (Fallback) ---
+  // --- STRATEGY 2: Gemini Grounding ---
   const performGeminiSearch = async (query: string, temperature: number, stage: string): Promise<SearchResult[]> => {
       const prompt = `
       ${SWEDISH_GROCERY_CONTEXT}
-      Task: Find direct public image URLs for the product: "${query}".
+      Task: Find direct public image URLs for the requested product: "${query}".
       Instructions:
       1. Search for this product on Swedish e-commerce sites.
       2. Extract the direct link to the high-resolution product image.
@@ -276,12 +340,15 @@ export const searchProductImages = async (
             chunks.forEach((c: any) => {
                 const web = c.web;
                 if (web && web.uri) { 
-                    if (isLikelyImageUrl(web.uri)) {
+                    const check = isLikelyImageUrl(web.uri);
+                    if (check.valid) {
                         allResults.set(web.uri, {
                             url: web.uri,
                             title: web.title || 'Result',
                             source: 'Google Grounding'
                         });
+                    } else {
+                        logger.warn(`[Gemini Grounding Blocked] ${web.uri} Reason: ${check.reason}`);
                     }
                 }
             });
@@ -307,11 +374,9 @@ export const searchProductImages = async (
      return await performGeminiSearch(customQuery, 0.4, 'CUSTOM');
   }
 
-  // Gemini Stage 1
   const results1 = await performGeminiSearch(queryToUse, 0.3, 'SPECIFIC');
   results = [...results, ...results1];
 
-  // Gemini Stage 2
   if (results.length < 2) {
       const query = `${queryToUse} produkt`; 
       const results2 = await performGeminiSearch(query, 0.5, 'STORE_FOCUSED');
@@ -392,72 +457,63 @@ export const generateProductImage = async (productName: string): Promise<string>
 };
 
 export const urlToBase64 = async (url: string, timeoutMs: number = 8000): Promise<string> => {
+  logger.info(`[Verbose] Download Start: ${url.substring(0, 50)}... (Timeout: ${timeoutMs}ms)`);
+  
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-  const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(url)}`;
+  
+  const proxyUrl = `${CORS_PROXY_BASE}${encodeURIComponent(url)}`;
 
   const tryFetch = async (targetUrl: string): Promise<Blob> => {
-    try {
-        const response = await fetch(targetUrl, { signal: controller.signal });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    logger.info(`[Verbose] Fetching URL: ${targetUrl.substring(0, 60)}...`);
+    const response = await fetch(targetUrl, { signal: controller.signal });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-        const contentType = response.headers.get('content-type') || '';
-        if (contentType.includes('text/html') || contentType.includes('application/xhtml')) {
-            throw new Error('URL_IS_HTML');
-        }
-
-        const blob = await response.blob();
-
-        // Validera att blob faktiskt är en bild
-        if (!blob.type.startsWith('image/')) {
-            // Om blob är stor och inte markerad som bild, troligen HTML/annat
-            if (blob.size > 100000) {
-                throw new Error('INVALID_IMAGE_DATA');
-            }
-        }
-        
-        // Safety check for content length if available
-        const size = response.headers.get('content-length');
-        if (size && parseInt(size) > 5 * 1024 * 1024) { // 5MB limit
-             throw new Error('IMAGE_TOO_LARGE');
-        }
-
-        return blob;
-    } catch (e: any) {
-        if (e.name === 'AbortError') throw new Error('TIMEOUT');
-        throw e;
+    const contentType = response.headers.get('content-type') || '';
+    logger.info(`[Verbose] Response Content-Type: ${contentType}`);
+    
+    if (contentType.includes('text/html') || contentType.includes('application/xhtml')) {
+      logger.warn(`[Verbose] Download Fail: URL returned HTML: ${targetUrl}`);
+      throw new Error('URL_IS_HTML');
     }
+
+    const blob = await response.blob();
+    logger.info(`[Verbose] Blob received. Type: ${blob.type}, Size: ${Math.round(blob.size / 1024)} KB`);
+
+    if (!blob.type.startsWith('image/')) {
+      if (blob.size > 100000) {
+        logger.warn(`[Verbose] Download Fail: Invalid blob type: ${blob.type}`);
+        throw new Error('INVALID_IMAGE_DATA');
+      }
+    }
+
+    return blob;
   };
 
   try {
     let blob: Blob;
 
-    // Attempt 1: Direct fetch
     try {
       blob = await tryFetch(url);
-      logger.info(`Direct fetch succeeded for ${url.substring(0, 50)}...`);
+      logger.info(`[Verbose] Direct fetch succeeded`);
     } catch (directError: any) {
-      // Om det är HTML eller timeout, kasta vidare direkt
-      const msg = directError.message || '';
-      if (msg === 'URL_IS_HTML' || 
-          msg === 'INVALID_IMAGE_DATA' ||
-          msg === 'IMAGE_TOO_LARGE' ||
-          msg === 'TIMEOUT') {
+      if (directError.message === 'URL_IS_HTML' || 
+          directError.message === 'INVALID_IMAGE_DATA' ||
+          directError.name === 'AbortError') {
         throw directError;
       }
 
-      // Attempt 2: Proxy fallback för CORS-fel
-      logger.info(`Direct fetch failed, trying proxy for ${url.substring(0, 50)}...`);
+      logger.info(`[Verbose] Direct fetch failed (${directError.message}), trying proxy...`);
+      // Only use proxy if direct failed and it wasn't a fatal error
+      
       try {
         blob = await tryFetch(proxyUrl);
-        logger.info(`Proxy fetch succeeded`);
+        logger.info(`[Verbose] Proxy fetch succeeded`);
       } catch (proxyError: any) {
-        // Om proxy också misslyckas, kasta ursprungliga felet eller proxy-felet
-        const pMsg = proxyError.message || '';
-        if (pMsg === 'URL_IS_HTML' || pMsg === 'INVALID_IMAGE_DATA' || pMsg === 'IMAGE_TOO_LARGE') {
+        if (proxyError.message === 'URL_IS_HTML' || proxyError.message === 'INVALID_IMAGE_DATA') {
           throw proxyError;
         }
-        throw new Error(`CORS_ERROR: Both direct and proxy failed. ${pMsg}`);
+        throw new Error(`CORS_ERROR: Both direct and proxy failed`);
       }
     }
 
@@ -465,8 +521,10 @@ export const urlToBase64 = async (url: string, timeoutMs: number = 8000): Promis
 
   } catch (error: any) {
     if (error.name === 'AbortError') {
+      logger.warn(`[Verbose] Download TIMEOUT (${timeoutMs}ms) for ${url}`);
       throw new Error('TIMEOUT');
     }
+    logger.warn(`[Verbose] Download Failed: ${error.message}`);
     throw error;
   } finally {
     clearTimeout(timeoutId);
@@ -478,7 +536,6 @@ const blobToDataUrl = (blob: Blob): Promise<string> => {
       const reader = new FileReader();
       reader.onloadend = () => {
           const res = reader.result as string;
-          // Extra safety check for DataURL content
           if (res && res.startsWith('data:text/html')) {
               reject(new Error('URL_IS_HTML'));
           } else {

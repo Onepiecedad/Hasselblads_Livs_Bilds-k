@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import CSVEditor from './components/CSVEditor';
 import ImageWorkflow from './components/ImageWorkflow';
@@ -6,14 +7,15 @@ import { CloudinaryConfig } from './components/CloudinaryConfig';
 import { BatchModeView } from './components/BatchModeView';
 import { DebugConsole } from './components/DebugConsole';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { ProgressStepper } from './components/ProgressStepper';
-import { BackButton } from './components/BackButton';
+import { ProductSidebar } from './components/ProductSidebar';
 import { Product, ProcessedProduct, AppStep } from './types';
-import { searchProductImages } from './geminiService';
-import { saveState, loadState, hasSavedState, clearState, getMeta } from './storageService';
+import { searchProductImages, setSearchConfig } from './geminiService';
+import { setCloudinaryConfig } from './cloudinaryService';
+import { saveState, loadState, hasSavedState, clearState } from './storageService';
 import { DEFAULT_CSV_CONTENT } from './constants/defaultData';
 import { parseCSVString } from './utils/csvParser';
-import { Layers, Undo2, Rocket, Hand, Filter, CheckCircle2, Zap, Save, Trash2, UploadCloud, PlayCircle, Download, ImageOff, Image as ImageIcon, Database, ShoppingBag, Settings } from 'lucide-react';
+import { Layers, Undo2, Rocket, Hand, Filter, CheckCircle2, Zap, Save, Trash2, UploadCloud, PlayCircle, Download, ImageOff, Image as ImageIcon, Database, ShoppingBag, Settings, List, ChevronLeft } from 'lucide-react';
+import { logger } from './logger';
 
 const App: React.FC = () => {
   const [step, setStep] = useState<AppStep>(AppStep.UPLOAD);
@@ -21,11 +23,40 @@ const App: React.FC = () => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [reviewFilter, setReviewFilter] = useState<'all' | 'incomplete'>('all');
   const [filterOriginalImages, setFilterOriginalImages] = useState<boolean>(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const prefetchingRef = useRef<Set<string>>(new Set());
+  
+  // FIX: Keep a ref to products to access inside effects without adding it to dependencies
+  const productsRef = useRef(products);
+  useEffect(() => { productsRef.current = products; }, [products]);
 
   // --- INITIAL LOAD ---
   useEffect(() => {
-      if (hasSavedState()) {
+    // 1. Config Migration: Check for the known broken key in LocalStorage and replace it
+    const OLD_BROKEN_KEY = 'AIzaSyAtSpe9Rm7Nm-SDQlM5utxWijbl_L3UG-o';
+    const CORRECT_KEY = 'AIzaSyAtSpe9Rm7Nm-SDqIM5utxWijbI_L3UG-o';
+    
+    let savedApiKey = localStorage.getItem('google_search_api_key');
+    
+    if (savedApiKey === OLD_BROKEN_KEY) {
+        logger.info('Detected broken API key in storage. Auto-migrating to correct key.');
+        localStorage.setItem('google_search_api_key', CORRECT_KEY);
+        savedApiKey = CORRECT_KEY;
+    }
+
+    const savedCx = localStorage.getItem('google_search_cx');
+    
+    const apiKeyToUse = savedApiKey || CORRECT_KEY;
+    const cxToUse = savedCx || 'b446eed8fbf424c0f';
+
+    logger.info(`Initializing Search Config. Key starts with: ${apiKeyToUse.substring(0, 5)}...`);
+    setSearchConfig(apiKeyToUse, cxToUse);
+
+    const savedCloud = localStorage.getItem('cloudinary_cloud_name') || 'da7wmiyra';
+    const savedPreset = localStorage.getItem('cloudinary_upload_preset') || 'woocom_upload';
+    setCloudinaryConfig(savedCloud, savedPreset);
+
+    if (hasSavedState()) {
           const savedProducts = loadState();
           if (savedProducts && savedProducts.length > 0) {
               setProducts(savedProducts);
@@ -34,6 +65,10 @@ const App: React.FC = () => {
       } else {
           loadDefaultDataset();
       }
+      
+      return () => {
+          prefetchingRef.current.clear();
+      };
   }, []);
 
   const loadDefaultDataset = () => {
@@ -61,17 +96,21 @@ const App: React.FC = () => {
       }
   }, [products]);
 
-  // --- PREFETCHING ---
+  // --- PREFETCHING (Fixed Loop) ---
   useEffect(() => {
     if (step !== AppStep.PROCESS) return;
     const PREFETCH_WINDOW = 10;
+    
+    const currentProducts = productsRef.current;
+    
     const runPrefetch = async () => {
         const indicesToFetch: number[] = [];
         let count = 0;
         let lookAhead = 1;
-        while (count < PREFETCH_WINDOW && (currentIndex + lookAhead) < products.length) {
+        
+        while (count < PREFETCH_WINDOW && (currentIndex + lookAhead) < currentProducts.length) {
             const idx = currentIndex + lookAhead;
-            const p = products[idx];
+            const p = currentProducts[idx];
             const hasInitial = p.initialImages && p.initialImages.length > 0;
             if (filterOriginalImages && hasInitial) {
                 lookAhead++;
@@ -83,14 +122,19 @@ const App: React.FC = () => {
             }
             lookAhead++;
         }
+        
         if (indicesToFetch.length === 0) return;
-        indicesToFetch.forEach(idx => prefetchingRef.current.add(products[idx].id));
+        
+        indicesToFetch.forEach(idx => prefetchingRef.current.add(currentProducts[idx].id));
 
         for (const idx of indicesToFetch) {
-            const product = products[idx];
+            const product = currentProducts[idx];
             try {
                 if (!prefetchingRef.current.has(product.id)) continue;
+                if (productsRef.current[idx].status !== 'pending') continue;
+
                 const results = await searchProductImages(product.product_name, product.brand, product.description);
+                
                 setProducts(prev => prev.map(p => {
                     if (p.id === product.id) {
                         return { ...p, prefetchedResults: results };
@@ -105,17 +149,27 @@ const App: React.FC = () => {
         }
     };
     runPrefetch();
-  }, [currentIndex, step, products, filterOriginalImages]);
+    
+    return () => {
+        prefetchingRef.current.clear();
+    };
+  }, [currentIndex, step, filterOriginalImages]);
 
-  // --- HANDLERS (Same logic, updated styling below) ---
+  // --- HANDLERS ---
   const handleCSVImport = (newProducts: Product[], mergeMode: boolean) => {
     if (mergeMode) {
         const updatedList = [...products];
         let addedCount = 0;
         let updatedCount = 0;
         newProducts.forEach(newP => {
-            const newId = newP['Artikelnummer'] || newP.product_name;
-            const existingIndex = updatedList.findIndex(p => (p['Artikelnummer'] || p.product_name) === newId);
+            const newP_ArtNr = newP.csvData?.['Artikelnummer'] || newP.csvData?.['sku'];
+            const newId = newP_ArtNr || newP.product_name;
+            
+            const existingIndex = updatedList.findIndex(p => {
+                const p_ArtNr = p.csvData?.['Artikelnummer'] || p.csvData?.['sku'];
+                return (p_ArtNr || p.product_name) === newId;
+            });
+
             if (existingIndex !== -1) {
                 const existing = updatedList[existingIndex];
                 updatedList[existingIndex] = {
@@ -159,16 +213,6 @@ const App: React.FC = () => {
       } else {
           setReviewFilter('all');
           setCurrentIndex(0);
-      }
-      setStep(AppStep.PROCESS);
-  };
-
-  const handleReviewFailed = (failedProducts: ProcessedProduct[]) => {
-      setReviewFilter('incomplete');
-      // Ensure we are viewing the first failed product
-      const firstFailedIndex = products.findIndex(p => p.status === 'failed');
-      if (firstFailedIndex !== -1) {
-          setCurrentIndex(firstFailedIndex);
       }
       setStep(AppStep.PROCESS);
   };
@@ -218,22 +262,23 @@ const App: React.FC = () => {
     }
   };
 
-  const handleUndo = () => {
+  const moveToPrevious = () => {
     const prevIndex = findNextIndex(products, currentIndex, -1);
     if (prevIndex !== -1) setCurrentIndex(prevIndex);
-    else if (confirm("Vill du gå tillbaka till dashboard?")) setStep(AppStep.DASHBOARD);
+  };
+
+  const jumpToProduct = (index: number) => {
+      if (index >= 0 && index < products.length) {
+          setCurrentIndex(index);
+          // Auto-close sidebar on mobile only
+          if (window.innerWidth < 1024) setIsSidebarOpen(false);
+      }
   };
 
   const toggleReviewFilter = () => {
       const newFilter = reviewFilter === 'all' ? 'incomplete' : 'all';
       setReviewFilter(newFilter);
       if (newFilter === 'incomplete' && products[currentIndex].status === 'completed') moveToNext(products);
-  };
-
-  const toggleOriginalImageFilter = () => {
-      const newVal = !filterOriginalImages;
-      setFilterOriginalImages(newVal);
-      if (newVal && products[currentIndex].initialImages && products[currentIndex].initialImages.length > 0) moveToNext(products);
   };
 
   const resetToDefault = () => {
@@ -250,17 +295,6 @@ const App: React.FC = () => {
         setCurrentIndex(0);
         setStep(AppStep.UPLOAD);
         prefetchingRef.current.clear();
-    }
-  };
-
-  const goBack = () => {
-    switch (step) {
-      case AppStep.CONFIGURE: setStep(AppStep.UPLOAD); break;
-      case AppStep.MODE_SELECT: setStep(AppStep.CONFIGURE); break;
-      case AppStep.BATCH: setStep(AppStep.MODE_SELECT); break;
-      case AppStep.PROCESS: setStep(AppStep.MODE_SELECT); break;
-      case AppStep.EXPORT: setStep(AppStep.MODE_SELECT); break;
-      default: break;
     }
   };
 
@@ -288,7 +322,7 @@ const App: React.FC = () => {
 
           {step === AppStep.PROCESS ? (
             <div className="flex-1 flex items-center justify-end gap-3 ml-4">
-              <button onClick={handleUndo} className="p-2 text-emerald-300 hover:text-white transition-colors" title="Föregående">
+              <button onClick={moveToPrevious} className="p-2 text-emerald-300 hover:text-white transition-colors" title="Föregående (Ctrl+Pil Vänster)">
                 <Undo2 size={20} />
               </button>
               <div className="flex-1 max-w-xl mr-auto ml-3 hidden md:block">
@@ -326,6 +360,16 @@ const App: React.FC = () => {
                   </span>
               </button>
 
+              <div className="h-6 w-px bg-emerald-800 mx-1"></div>
+
+              <button 
+                onClick={() => setIsSidebarOpen(!isSidebarOpen)} 
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${isSidebarOpen ? 'bg-white text-emerald-900 shadow-md' : 'text-emerald-200 hover:bg-emerald-800'}`}
+              >
+                 <List size={18} />
+                 <span className="hidden lg:inline">Lista</span>
+              </button>
+
               <button onClick={() => setStep(AppStep.DASHBOARD)} className="ml-2 text-emerald-300 hover:text-white font-medium text-xs border-l border-emerald-800 pl-4">
                   Avsluta
               </button>
@@ -340,20 +384,9 @@ const App: React.FC = () => {
           )}
         </header>
 
-        {/* STEPPER */}
-        {step !== AppStep.UPLOAD && step !== AppStep.DASHBOARD && (
-            <ProgressStepper currentStep={step} />
-        )}
-
-        <main className="flex-1 p-4 md:p-8 overflow-hidden flex flex-col">
-          <div className="flex-1 max-w-7xl mx-auto w-full h-full">
-            
-            {/* BACK BUTTON */}
-            {step !== AppStep.DASHBOARD && step !== AppStep.UPLOAD && step !== AppStep.PROCESS && (
-                <BackButton onClick={goBack} />
-            )}
-
-            {/* --- DASHBOARD VIEW --- */}
+        <main className="flex-1 p-4 md:p-8 overflow-hidden flex flex-col relative">
+          <div className={`flex-1 w-full h-full transition-all duration-300 ease-in-out ${step === AppStep.PROCESS && isSidebarOpen ? 'lg:mr-80' : ''}`}>
+            {/* DASHBOARD & OTHER VIEWS */}
             {step === AppStep.DASHBOARD && (
                 <div className="max-w-5xl mx-auto mt-6">
                     <div className="bg-white rounded-2xl shadow-lg border border-stone-200 overflow-hidden mb-8">
@@ -365,7 +398,7 @@ const App: React.FC = () => {
                             </div>
                         </div>
                         
-                        <div className="grid grid-cols-3 divide-x divide-stone-100 border-b border-stone-100">
+                        <div className="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-stone-100 border-b border-stone-100">
                             <div className="p-8 text-center group hover:bg-stone-50 transition-colors cursor-default">
                                 <div className="text-4xl font-bold text-stone-800 mb-1 serif-font">{products.length}</div>
                                 <div className="text-xs font-bold text-stone-400 uppercase tracking-widest">Totalt antal</div>
@@ -459,19 +492,32 @@ const App: React.FC = () => {
                   </div>
               </div>
             )}
-            {step === AppStep.BATCH && (
-                <BatchModeView 
-                    products={products} 
-                    onComplete={handleBatchComplete} 
-                    onCancel={() => setStep(AppStep.DASHBOARD)}
-                    onReviewFailed={handleReviewFailed}
-                />
-            )}
+            {step === AppStep.BATCH && <BatchModeView products={products} onComplete={handleBatchComplete} onCancel={() => setStep(AppStep.DASHBOARD)} />}
             {step === AppStep.PROCESS && currentProduct && (
-              <div className="h-full flex flex-col"><ImageWorkflow key={currentProduct.id} product={currentProduct} onComplete={handleProductComplete} onSkip={handleProductSkip} /></div>
+              <div className="h-full flex flex-col">
+                  <ImageWorkflow 
+                    key={currentProduct.id} 
+                    product={currentProduct} 
+                    onComplete={handleProductComplete} 
+                    onSkip={handleProductSkip}
+                    onPrevious={moveToPrevious}
+                  />
+              </div>
             )}
             {step === AppStep.EXPORT && <ExportView products={products} onReset={() => setStep(AppStep.DASHBOARD)} />}
           </div>
+          
+          {/* SIDEBAR */}
+          {step === AppStep.PROCESS && (
+              <ProductSidebar 
+                products={products}
+                currentIndex={currentIndex}
+                isOpen={isSidebarOpen}
+                onClose={() => setIsSidebarOpen(false)}
+                onSelect={jumpToProduct}
+              />
+          )}
+
         </main>
         <DebugConsole />
       </div>

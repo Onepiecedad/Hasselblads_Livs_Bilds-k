@@ -39,20 +39,39 @@ const CSVEditor: React.FC<CSVEditorProps> = ({ onConfirm, isMergeMode = false })
       ];
       setHeaders(demoHeaders);
       setProducts(demoData.map((d, i) => ({
-          id: `demo_${i}`, product_name: d.name, description: d.desc, brand: d.brand, initialImages: d.img ? [d.img] : [],
-          'Namn': d.name, 'Beskrivning': d.desc, 'Varumärke': d.brand, 'Bilder': d.img
+          id: `demo_${i}`, 
+          product_name: d.name, 
+          description: d.desc, 
+          brand: d.brand, 
+          initialImages: d.img ? [d.img] : [],
+          csvData: { 'Namn': d.name, 'Beskrivning': d.desc, 'Varumärke': d.brand, 'Bilder': d.img }
       })));
   };
 
-  const updateProduct = (id: string, field: string, value: string) => {
-    setProducts(prev => prev.map(p => p.id === id ? { ...p, [field]: value } : p));
+  const updateProduct = (id: string, field: string, value: string, isCsvData: boolean = false) => {
+    setProducts(prev => prev.map(p => {
+        if (p.id !== id) return p;
+        if (isCsvData) {
+            return { ...p, csvData: { ...p.csvData, [field]: value } };
+        }
+        return { ...p, [field]: value as string };
+    }));
   };
 
   const removeProduct = (id: string) => { setProducts(prev => prev.filter(p => p.id !== id)); };
 
   const addRow = () => {
-    const newProduct: any = { id: `new_${Date.now()}`, product_name: 'Ny Produkt', description: '', brand: '', initialImages: [] };
-    headers.forEach(h => newProduct[h] = '');
+    const newProduct: Product = { 
+        id: `new_${Date.now()}`, 
+        product_name: 'Ny Produkt', 
+        description: '', 
+        brand: '', 
+        initialImages: [],
+        csvData: {} 
+    };
+    headers.forEach(h => {
+        if(newProduct.csvData) newProduct.csvData[h] = '';
+    });
     setProducts([...products, newProduct]);
   };
 
@@ -113,22 +132,27 @@ const CSVEditor: React.FC<CSVEditorProps> = ({ onConfirm, isMergeMode = false })
             </tr>
           </thead>
           <tbody className="divide-y divide-stone-100">
-            {products.map((product) => (
-              <tr key={product.id} className="hover:bg-amber-50/30 group transition-colors">
-                <td className="p-4 font-mono text-stone-400 text-xs align-top pt-5">{product['Artikelnummer'] || product['sku'] || '-'}</td>
-                <td className="p-4 align-top"><textarea value={product.product_name || ''} onChange={(e) => updateProduct(product.id, 'product_name', e.target.value)} rows={2} className="w-full bg-transparent focus:bg-white border-transparent focus:border-emerald-300 focus:ring-4 focus:ring-emerald-50 rounded-lg p-2 outline-none font-bold text-stone-800 resize-none transition-all" /></td>
-                <td className="p-4 align-top"><input type="text" value={product.brand || ''} onChange={(e) => updateProduct(product.id, 'brand', e.target.value)} className="w-full bg-transparent focus:bg-white border-transparent focus:border-emerald-300 focus:ring-4 focus:ring-emerald-50 rounded-lg p-2 outline-none text-emerald-700 font-medium" placeholder="-" /></td>
-                <td className="p-4 align-top"><textarea value={product.description || ''} onChange={(e) => updateProduct(product.id, 'description', e.target.value)} rows={2} className="w-full bg-transparent focus:bg-white border-transparent focus:border-emerald-300 focus:ring-4 focus:ring-emerald-50 rounded-lg p-2 outline-none text-stone-500 resize-none" /></td>
-                <td className="p-4 align-top">
-                    <div className="flex -space-x-3 hover:space-x-1 transition-all pt-1">
-                        {product.initialImages && product.initialImages.length > 0 ? (
-                            product.initialImages.slice(0, 3).map((img, i) => <img key={i} src={img} className="w-10 h-10 rounded-full border-2 border-white shadow-md object-cover bg-stone-200" />)
-                        ) : <div className="w-10 h-10 rounded-full bg-stone-100 flex items-center justify-center text-stone-300 border-2 border-white"><ImageIcon size={16} /></div>}
-                    </div>
-                </td>
-                <td className="p-4 text-center align-top pt-5"><button onClick={() => removeProduct(product.id)} className="text-stone-300 hover:text-red-500 transition-colors"><Trash2 size={18} /></button></td>
-              </tr>
-            ))}
+            {products.map((product) => {
+              // Attempt to find SKU/Art.Nr in csvData
+              const artNr = product.csvData ? (product.csvData['Artikelnummer'] || product.csvData['sku'] || product.csvData['Art.nr'] || '-') : '-';
+              
+              return (
+                <tr key={product.id} className="hover:bg-amber-50/30 group transition-colors">
+                  <td className="p-4 font-mono text-stone-400 text-xs align-top pt-5">{artNr}</td>
+                  <td className="p-4 align-top"><textarea value={product.product_name || ''} onChange={(e) => updateProduct(product.id, 'product_name', e.target.value)} rows={2} className="w-full bg-transparent focus:bg-white border-transparent focus:border-emerald-300 focus:ring-4 focus:ring-emerald-50 rounded-lg p-2 outline-none font-bold text-stone-800 resize-none transition-all" /></td>
+                  <td className="p-4 align-top"><input type="text" value={product.brand || ''} onChange={(e) => updateProduct(product.id, 'brand', e.target.value)} className="w-full bg-transparent focus:bg-white border-transparent focus:border-emerald-300 focus:ring-4 focus:ring-emerald-50 rounded-lg p-2 outline-none text-emerald-700 font-medium" placeholder="-" /></td>
+                  <td className="p-4 align-top"><textarea value={product.description || ''} onChange={(e) => updateProduct(product.id, 'description', e.target.value)} rows={2} className="w-full bg-transparent focus:bg-white border-transparent focus:border-emerald-300 focus:ring-4 focus:ring-emerald-50 rounded-lg p-2 outline-none text-stone-500 resize-none" /></td>
+                  <td className="p-4 align-top">
+                      <div className="flex -space-x-3 hover:space-x-1 transition-all pt-1">
+                          {product.initialImages && product.initialImages.length > 0 ? (
+                              product.initialImages.slice(0, 3).map((img, i) => <img key={i} src={img} className="w-10 h-10 rounded-full border-2 border-white shadow-md object-cover bg-stone-200" />)
+                          ) : <div className="w-10 h-10 rounded-full bg-stone-100 flex items-center justify-center text-stone-300 border-2 border-white"><ImageIcon size={16} /></div>}
+                      </div>
+                  </td>
+                  <td className="p-4 text-center align-top pt-5"><button onClick={() => removeProduct(product.id)} className="text-stone-300 hover:text-red-500 transition-colors"><Trash2 size={18} /></button></td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

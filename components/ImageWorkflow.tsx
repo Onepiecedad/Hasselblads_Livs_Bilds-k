@@ -1,15 +1,16 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { ProcessedProduct, SearchResult, ChatMessage } from '../types';
 import { searchProductImages, editProductImage, urlToBase64 } from '../geminiService';
 import { uploadToCloudinary, isCloudinaryConfigured } from '../cloudinaryService';
 import { TEMPLATES } from '../constants';
-import { Image as ImageIcon, Loader2, ArrowRight, SkipForward, AlertCircle, Wand2, RefreshCw, Upload, LayoutTemplate, ImageOff, Search, Save, X, Plus, CheckCircle2 } from 'lucide-react';
-import { KeyboardHints } from './KeyboardHints';
+import { Image as ImageIcon, Loader2, ArrowRight, SkipForward, AlertCircle, Wand2, RefreshCw, Upload, LayoutTemplate, ImageOff, Search, Save, X, Plus, CheckCircle2, ChevronLeft } from 'lucide-react';
 
 interface ImageWorkflowProps {
   product: ProcessedProduct;
   onComplete: (imageUrl: string) => void;
   onSkip: () => void;
+  onPrevious: () => void;
 }
 
 interface ImageResultItemProps {
@@ -17,39 +18,44 @@ interface ImageResultItemProps {
   idx: number;
   isSelected: boolean;
   onClick: () => void;
+  small?: boolean;
 }
 
-const ImageResultItem: React.FC<ImageResultItemProps> = ({ res, idx, isSelected, onClick }) => {
+const ImageResultItem: React.FC<ImageResultItemProps> = ({ res, idx, isSelected, onClick, small = false }) => {
     const [error, setError] = useState(false);
 
     return (
         <div 
             onClick={onClick}
-            className={`group relative aspect-square bg-white rounded-xl overflow-hidden cursor-pointer shadow-sm transition-all border ${
+            className={`group relative bg-white rounded-xl overflow-hidden cursor-pointer shadow-sm transition-all border flex-shrink-0 ${
+                small ? 'w-20 h-20' : 'aspect-square'
+            } ${
                 isSelected 
-                ? 'ring-4 ring-amber-500 border-amber-500 scale-[1.02] z-10 shadow-lg' 
+                ? 'ring-4 ring-amber-500 border-amber-500 scale-[0.98] z-10 shadow-lg' 
                 : 'hover:shadow-md hover:ring-2 hover:ring-emerald-200 border-stone-200'
             }`}
         >
-            <div className={`absolute top-2 right-2 text-white text-[10px] font-bold px-1.5 py-0.5 rounded backdrop-blur-sm z-20 transition-opacity ${isSelected ? 'bg-amber-600 opacity-100' : 'bg-black/50 opacity-0 group-hover:opacity-100'}`}>
-                {idx + 1}
-            </div>
+            {!small && (
+                <div className={`absolute top-2 right-2 text-white text-[10px] font-bold px-1.5 py-0.5 rounded backdrop-blur-sm z-20 transition-opacity ${isSelected ? 'bg-amber-600 opacity-100' : 'bg-black/50 opacity-0 group-hover:opacity-100'}`}>
+                    {idx + 1}
+                </div>
+            )}
 
             {error ? (
                 <div className="w-full h-full flex flex-col items-center justify-center bg-stone-50 text-stone-300">
-                    <ImageOff size={24} />
-                    <span className="text-[10px] mt-1 text-stone-400">Bild saknas</span>
+                    <ImageOff size={small ? 16 : 24} />
+                    {!small && <span className="text-[10px] mt-1 text-stone-400">Bild saknas</span>}
                 </div>
             ) : (
                 <img 
                     src={res.url} 
                     alt={res.title} 
-                    className="w-full h-full object-contain p-3" 
+                    className="w-full h-full object-contain p-1.5" 
                     onError={() => setError(true)}
                     referrerPolicy="no-referrer"
                 />
             )}
-            {!error && (
+            {!error && !small && (
                 <>
                     <div className="absolute inset-0 bg-emerald-900/0 group-hover:bg-emerald-900/5 transition-colors" />
                     <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
@@ -61,7 +67,7 @@ const ImageResultItem: React.FC<ImageResultItemProps> = ({ res, idx, isSelected,
     );
 };
 
-const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSkip }) => {
+const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSkip, onPrevious }) => {
   const [step, setStep] = useState<'SEARCH' | 'EDIT' | 'TEMPLATES'>('SEARCH');
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -79,14 +85,17 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const resultsContainerRef = useRef<HTMLDivElement>(null);
+  const galleryScrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  
+  // Track mount status to prevent setting state on unmounted component
+  const isMounted = useRef(true);
 
-  const shortcuts = [
-      { key: '1-9', action: 'Välj bild' },
-      { key: 'Enter', action: 'Spara & Nästa' },
-      { key: '→', action: 'Hoppa över' },
-  ];
+  useEffect(() => {
+    isMounted.current = true;
+    return () => { isMounted.current = false; };
+  }, []);
 
   useEffect(() => {
     let initialResults: SearchResult[] = [];
@@ -112,6 +121,7 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
     }
     setSelectedImage(null);
     setSelectedImageUrl(null);
+    setStep('SEARCH'); // Ensure reset to SEARCH on new product
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [product.id]);
 
@@ -126,10 +136,11 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
               if (selectedImageUrl || selectedImage) finalizeImage();
           }
           if (e.key === 'ArrowRight' && !selectedImageUrl && !selectedImage) onSkip();
+          if (e.key === 'ArrowLeft' && !selectedImageUrl && !selectedImage) onPrevious();
       };
       window.addEventListener('keydown', handleKeyDown);
       return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [searchResults, selectedImageUrl, selectedImage, step, isLoading]);
+  }, [searchResults, selectedImageUrl, selectedImage, step, isLoading, onSkip, onPrevious]);
 
   useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, [chatMessages]);
 
@@ -142,6 +153,9 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
       const isRetry = searchAttempts > 0;
       const isCustom = queryToUse !== product.product_name;
       const results = await searchProductImages(product.product_name, product.brand, product.description, isRetry, isCustom ? queryToUse : undefined);
+      
+      if (!isMounted.current) return;
+
       setSearchResults(prev => {
           const existingUrls = new Set(prev.map(r => r.url.toLowerCase().trim()));
           const newUnique = results.filter(r => !existingUrls.has(r.url.toLowerCase().trim()));
@@ -151,7 +165,11 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
       });
       if (results.length === 0 && searchResults.length === 0) setError("Inga bilder hittades.");
       setSearchAttempts(prev => prev + 1);
-    } catch (err) { setError("Sökning misslyckades."); } finally { setIsLoading(false); }
+    } catch (err) { 
+        if (isMounted.current) setError("Sökning misslyckades."); 
+    } finally { 
+        if (isMounted.current) setIsLoading(false); 
+    }
   };
 
   const handleImageSelect = async (url: string) => {
@@ -160,13 +178,23 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
     setIsEditable(true);
     try {
       const base64DataUri = await urlToBase64(url);
+      if (!isMounted.current) return;
       setSelectedImage(base64DataUri);
       setStep('EDIT');
     } catch (e: any) {
-      if (e.message === 'CORS_ERROR') {
-         setSelectedImageUrl(url); setSelectedImage(null); setIsEditable(false); setStep('EDIT');
-      } else { setError("Kunde inte ladda bilden."); }
-    } finally { setIsLoading(false); }
+      if (!isMounted.current) return;
+      if (e.message === 'CORS_ERROR' || e.message === 'TIMEOUT' || e.message === 'URL_IS_HTML') {
+         // Fallback: If we can't download it (CORS/Proxy fail), keep the URL and let Cloudinary try backend upload
+         setSelectedImageUrl(url); 
+         setSelectedImage(null); 
+         setIsEditable(false); 
+         setStep('EDIT');
+      } else { 
+         setError("Kunde inte ladda bilden."); 
+      }
+    } finally { 
+        if (isMounted.current) setIsLoading(false); 
+    }
   };
 
   const handleChipClick = (index: number) => {
@@ -196,7 +224,9 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
     const reader = new FileReader();
     reader.onload = (event) => {
       const result = event.target?.result as string;
-      setSelectedImage(result); setSelectedImageUrl(null); setStep('EDIT'); setIsEditable(true);
+      if(isMounted.current) {
+          setSelectedImage(result); setSelectedImageUrl(null); setStep('EDIT'); setIsEditable(true);
+      }
     };
     reader.readAsDataURL(file);
     e.target.value = '';
@@ -209,13 +239,19 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
     setIsLoading(true);
     try {
       const newImageBase64 = await editProductImage(selectedImage, textToSend);
+      if (!isMounted.current) return;
+      
       if (newImageBase64) {
          setSelectedImage(newImageBase64); setSelectedImageUrl(null); setIsEditable(true); 
          setChatMessages(prev => [...prev, { role: 'model', text: 'Fixat! Nöjd?', image: newImageBase64, isImageGeneration: true }]);
       } else {
          setChatMessages(prev => [...prev, { role: 'model', text: 'Kunde inte generera bild. Prova igen.' }]);
       }
-    } catch (err) { setChatMessages(prev => [...prev, { role: 'model', text: 'Något gick fel.' }]); } finally { setIsLoading(false); }
+    } catch (err) { 
+        if (isMounted.current) setChatMessages(prev => [...prev, { role: 'model', text: 'Något gick fel.' }]); 
+    } finally { 
+        if (isMounted.current) setIsLoading(false); 
+    }
   };
 
   const finalizeImage = async () => {
@@ -231,8 +267,10 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
                 finalUrl = cloudUrl; 
             } catch (cloudError) { console.warn('Cloudinary upload failed, falling back to local.', cloudError); }
         }
-        onComplete(finalUrl);
-    } catch (e) { setError('Kunde inte spara bilden.'); setIsSaving(false); }
+        if(isMounted.current) onComplete(finalUrl);
+    } catch (e) { 
+        if (isMounted.current) { setError('Kunde inte spara bilden.'); setIsSaving(false); }
+    }
   };
 
   if (step === 'SEARCH' || step === 'TEMPLATES') {
@@ -345,16 +383,20 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
         )}
 
         <div className="mt-auto p-4 border-t border-stone-200 flex justify-between gap-4 bg-white sticky bottom-0 z-20 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
-           <button onClick={onSkip} className="flex items-center gap-2 text-stone-500 hover:text-stone-800 px-5 py-2.5 bg-stone-100 hover:bg-stone-200 rounded-lg text-sm font-bold transition-colors">
-             <SkipForward size={18} /> Hoppa över
-           </button>
+           <div className="flex gap-2">
+               <button onClick={onPrevious} className="flex items-center gap-2 text-stone-500 hover:text-stone-800 px-4 py-2.5 bg-stone-100 hover:bg-stone-200 rounded-lg text-sm font-bold transition-colors">
+                 <ChevronLeft size={18} /> Föregående
+               </button>
+               <button onClick={onSkip} className="flex items-center gap-2 text-stone-500 hover:text-stone-800 px-4 py-2.5 bg-stone-100 hover:bg-stone-200 rounded-lg text-sm font-bold transition-colors">
+                 <SkipForward size={18} /> Hoppa över
+               </button>
+           </div>
            {step === 'SEARCH' && (
              <button onClick={() => performSearch()} disabled={isLoading} className="flex items-center gap-2 text-emerald-700 hover:text-emerald-900 text-sm font-bold">
                 <RefreshCw size={16} className={isLoading ? 'animate-spin' : ''} /> Ladda fler
              </button>
            )}
         </div>
-        <KeyboardHints shortcuts={shortcuts} />
       </div>
     );
   }
@@ -363,6 +405,32 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
   const displayImage = selectedImageUrl || selectedImage;
   return (
     <div className="flex flex-col h-full bg-stone-50/50">
+      
+      {/* GALLERY STRIP (NEW) */}
+      <div className="bg-white border-b border-stone-200 p-3 shadow-sm z-10">
+          <div className="flex items-center gap-3 overflow-x-auto pb-1 custom-scrollbar" ref={galleryScrollRef}>
+              <span className="text-[10px] font-bold text-stone-400 uppercase tracking-widest shrink-0 mr-1">Galleri</span>
+              {searchResults.map((res, idx) => (
+                  <ImageResultItem 
+                      key={`thumb-${idx}`} 
+                      res={res} 
+                      idx={idx} 
+                      isSelected={res.url === selectedImageUrl} 
+                      onClick={() => handleImageSelect(res.url)} 
+                      small={true}
+                  />
+              ))}
+              <button 
+                  onClick={() => performSearch()} 
+                  disabled={isLoading}
+                  className="w-20 h-20 shrink-0 bg-stone-50 border border-stone-200 hover:border-emerald-400 hover:bg-emerald-50 rounded-xl flex flex-col items-center justify-center text-stone-400 hover:text-emerald-600 transition-colors gap-1"
+              >
+                  <RefreshCw size={16} className={isLoading ? 'animate-spin' : ''} />
+                  <span className="text-[10px] font-bold">Fler</span>
+              </button>
+          </div>
+      </div>
+
       <div className="flex-1 flex flex-col md:flex-row gap-6 overflow-hidden p-6">
         <div className="h-64 shrink-0 md:h-auto md:flex-1 bg-white rounded-2xl flex items-center justify-center p-8 relative overflow-hidden shadow-sm border border-stone-200 group">
            <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-[0.03] pointer-events-none"></div>
@@ -382,7 +450,7 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
                 <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></div>
                 <span className="text-xs font-bold text-stone-600 uppercase tracking-widest">AI Editor</span>
             </div>
-            <button onClick={() => setStep('SEARCH')} className="text-xs text-stone-400 hover:text-emerald-700 font-medium transition-colors">Byt bild</button>
+            <button onClick={() => setStep('SEARCH')} className="text-xs text-stone-400 hover:text-emerald-700 font-medium transition-colors">Visa alla (Grid)</button>
           </div>
           <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-white" ref={scrollRef}>
             {chatMessages.map((msg, i) => (
@@ -405,7 +473,7 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
 
       <div className="mt-auto p-4 border-t border-stone-200 flex justify-between items-center bg-white">
         <button onClick={() => setStep('SEARCH')} disabled={isSaving} className="text-stone-400 hover:text-emerald-900 text-sm font-bold flex items-center gap-2 transition-colors uppercase tracking-wide">
-          ← Tillbaka
+          <ChevronLeft size={16} /> Tillbaka
         </button>
         <button onClick={finalizeImage} disabled={!displayImage || isSaving} className="flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-white px-8 py-3 rounded-lg font-bold shadow-lg shadow-amber-200 transition-all hover:-translate-y-0.5 disabled:opacity-50 disabled:shadow-none min-w-[160px] justify-center">
             {isSaving ? <><Loader2 className="animate-spin" size={18} /> Sparar...</> : <>Spara & Nästa <ArrowRight size={18} /></>}

@@ -1,14 +1,13 @@
+
 import React, { useState, useRef, useEffect } from 'react';
-import { Play, StopCircle, CheckCircle, AlertTriangle, ArrowRight, Loader2, Image as ImageIcon, SkipForward, Zap, XCircle, Eye } from 'lucide-react';
+import { Play, StopCircle, CheckCircle, AlertTriangle, ArrowRight, Loader2, Image as ImageIcon, SkipForward, Zap, XCircle } from 'lucide-react';
 import { Product, ProcessedProduct } from '../types';
 import { runBatchProcess, BatchProgress, BatchResult } from '../batchProcessor';
-import { ConfirmDialog } from './ConfirmDialog';
 
 interface BatchModeViewProps {
   products: Product[];
   onComplete: (results: ProcessedProduct[]) => void;
   onCancel: () => void;
-  onReviewFailed: (failedProducts: ProcessedProduct[]) => void;
 }
 
 type BatchStatus = 'idle' | 'running' | 'paused' | 'completed' | 'cancelled';
@@ -16,16 +15,13 @@ type BatchStatus = 'idle' | 'running' | 'paused' | 'completed' | 'cancelled';
 export const BatchModeView: React.FC<BatchModeViewProps> = ({
   products,
   onComplete,
-  onCancel,
-  onReviewFailed
+  onCancel
 }) => {
   const [status, setStatus] = useState<BatchStatus>('idle');
   const [progress, setProgress] = useState<BatchProgress | null>(null);
   const [result, setResult] = useState<BatchResult | null>(null);
   const [startTime, setStartTime] = useState<number | null>(null);
   const [speed, setSpeed] = useState<string>('--');
-  const [currentImage, setCurrentImage] = useState<string | null>(null);
-  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
 
   // Calculate speed (products per minute)
@@ -49,10 +45,7 @@ export const BatchModeView: React.FC<BatchModeViewProps> = ({
         {
           delayBetweenProducts: 500, // Fast processing
           skipExistingImages: true,
-          abortSignal: abortControllerRef.current.signal,
-          onImageResult: (p, url) => {
-              if (url) setCurrentImage(url);
-          }
+          abortSignal: abortControllerRef.current.signal
         }
       );
 
@@ -64,23 +57,15 @@ export const BatchModeView: React.FC<BatchModeViewProps> = ({
     }
   };
 
-  const confirmCancel = () => {
+  const handleStop = () => {
     abortControllerRef.current?.abort();
     setStatus('cancelled');
-    setShowCancelConfirm(false);
   };
 
   const handleFinish = () => {
     if (result) {
       onComplete(result.products);
     }
-  };
-
-  const handleReviewFailures = () => {
-      if (result) {
-          const failed = result.products.filter(p => p.status === 'failed');
-          onReviewFailed(failed);
-      }
   };
 
   const formatTime = (ms: number): string => {
@@ -111,13 +96,13 @@ export const BatchModeView: React.FC<BatchModeViewProps> = ({
                     </div>
                     <h2 className="text-5xl font-bold serif-font mb-4 tracking-tight text-amber-400">Bearbetning Klar</h2>
                     <p className="text-emerald-100 text-lg font-light max-w-lg mx-auto leading-relaxed">
-                        Alla {products.length} produkter är genomgångna.
+                        Alla {products.length} produkter är genomgångna. Nu kan du granska resultatet och exportera.
                     </p>
                 </div>
             </div>
             
             <div className="p-10 bg-white">
-                <div className="grid grid-cols-3 gap-6 mb-10 text-center">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-10 text-center">
                     <div className="p-6 bg-emerald-50 rounded-2xl border border-emerald-100 shadow-sm group hover:border-emerald-300 transition-colors">
                         <div className="text-5xl font-bold text-emerald-800 mb-2 serif-font">{result.stats.completed}</div>
                         <div className="text-xs font-bold text-emerald-700 uppercase tracking-widest flex items-center justify-center gap-1">
@@ -127,7 +112,7 @@ export const BatchModeView: React.FC<BatchModeViewProps> = ({
                     <div className="p-6 bg-amber-50 rounded-2xl border border-amber-100 shadow-sm group hover:border-amber-300 transition-colors">
                         <div className="text-5xl font-bold text-amber-700 mb-2 serif-font">{result.stats.failed}</div>
                         <div className="text-xs font-bold text-amber-700 uppercase tracking-widest flex items-center justify-center gap-1">
-                            <AlertTriangle size={12} /> Misslyckade
+                            <AlertTriangle size={12} /> Behöver åtgärd
                         </div>
                     </div>
                     <div className="p-6 bg-stone-50 rounded-2xl border border-stone-200 shadow-sm group hover:border-stone-300 transition-colors">
@@ -138,23 +123,12 @@ export const BatchModeView: React.FC<BatchModeViewProps> = ({
                     </div>
                 </div>
 
-                <div className="flex gap-4">
-                    <button
-                        onClick={handleFinish}
-                        className="flex-1 flex items-center justify-center gap-4 bg-emerald-900 hover:bg-emerald-800 text-white py-4 px-8 rounded-xl font-bold text-lg transition-all shadow-xl shadow-emerald-900/20 hover:-translate-y-1 group border border-emerald-800"
-                    >
-                        Gå till Export <ArrowRight size={20} className="text-amber-400 group-hover:translate-x-1 transition-transform" />
-                    </button>
-                    
-                    {result.stats.failed > 0 && (
-                        <button
-                            onClick={handleReviewFailures}
-                            className="flex-1 flex items-center justify-center gap-4 bg-amber-50 border-2 border-amber-200 hover:bg-amber-100 text-amber-900 py-4 px-8 rounded-xl font-bold text-lg transition-all"
-                        >
-                            Granska misslyckade ({result.stats.failed}) <Eye size={20} />
-                        </button>
-                    )}
-                </div>
+                <button
+                    onClick={handleFinish}
+                    className="w-full flex items-center justify-center gap-4 bg-emerald-900 hover:bg-emerald-800 text-white py-6 px-8 rounded-xl font-bold text-xl transition-all shadow-xl shadow-emerald-900/20 hover:-translate-y-1 group border border-emerald-800"
+                >
+                    Gå till Granskning <ArrowRight size={24} className="text-amber-400 group-hover:translate-x-1 transition-transform" />
+                </button>
             </div>
         </div>
       );
@@ -216,16 +190,13 @@ export const BatchModeView: React.FC<BatchModeViewProps> = ({
                         </div>
                         
                         <div className="flex justify-between items-center text-sm text-emerald-100">
-                            <div className="flex items-center gap-4 bg-emerald-900/50 px-3 py-1.5 rounded-lg border border-emerald-800/50 flex-1 mr-4">
-                                {currentImage ? (
-                                    <img src={currentImage} className="w-8 h-8 rounded border border-white/20 object-cover bg-white" alt="Live" />
-                                ) : (
-                                    <div className="w-8 h-8 rounded border border-white/10 bg-white/5 flex items-center justify-center"><Loader2 size={12} className="animate-spin" /></div>
-                                )}
-                                <div className="overflow-hidden">
-                                    <span className="opacity-80 text-xs block">Bearbetar:</span>
-                                    <strong className="font-medium truncate block text-white">{progress.currentProduct}</strong>
+                            <div className="flex items-center gap-3 bg-emerald-900/50 px-3 py-1.5 rounded-lg border border-emerald-800/50">
+                                <div className="relative">
+                                    <div className="w-2.5 h-2.5 bg-amber-500 rounded-full animate-ping absolute opacity-75"></div>
+                                    <div className="w-2.5 h-2.5 bg-amber-500 rounded-full"></div>
                                 </div>
+                                <span className="opacity-80">Bearbetar:</span>
+                                <strong className="font-medium truncate max-w-[200px] text-white">{progress.currentProduct}</strong>
                             </div>
                             
                             <div className="flex items-center gap-2 text-emerald-300">
@@ -237,7 +208,7 @@ export const BatchModeView: React.FC<BatchModeViewProps> = ({
                 </div>
 
                 {/* Statistics Grid */}
-                <div className="grid grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <div className="bg-emerald-50 border border-emerald-100 p-5 rounded-2xl flex items-center gap-4">
                         <div className="w-12 h-12 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 shadow-sm">
                             <ImageIcon size={24} />
@@ -270,7 +241,7 @@ export const BatchModeView: React.FC<BatchModeViewProps> = ({
                 </div>
 
                 <div className="flex justify-center pt-2">
-                    <button onClick={() => setShowCancelConfirm(true)} className="group flex items-center gap-2 text-stone-400 hover:text-red-500 font-medium text-sm transition-colors py-2 px-4 rounded-lg hover:bg-red-50">
+                    <button onClick={handleStop} className="group flex items-center gap-2 text-stone-400 hover:text-red-500 font-medium text-sm transition-colors py-2 px-4 rounded-lg hover:bg-red-50">
                         <StopCircle size={18} className="group-hover:fill-red-100" /> Avbryt processen (pausa)
                     </button>
                 </div>
@@ -313,17 +284,6 @@ export const BatchModeView: React.FC<BatchModeViewProps> = ({
             </div>
         )}
       </div>
-
-      <ConfirmDialog
-        isOpen={showCancelConfirm}
-        title="Avbryta bearbetning?"
-        message="Ditt framsteg sparas automatiskt. Du kan fortsätta senare från där du slutade."
-        confirmLabel="Ja, avbryt"
-        cancelLabel="Nej, fortsätt"
-        variant="warning"
-        onConfirm={confirmCancel}
-        onCancel={() => setShowCancelConfirm(false)}
-      />
     </div>
   );
 };

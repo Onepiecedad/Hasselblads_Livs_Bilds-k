@@ -55,12 +55,21 @@ export const parseCSVString = (text: string): Product[] => {
 
     return lines.slice(1).map((line, index) => {
       const values = parseCSVLine(line, separator);
-      const product: any = { id: `prod_${index}_${Date.now()}` };
+      const product: Product = { 
+          id: `prod_${index}_${Date.now()}`,
+          product_name: '',
+          description: '',
+          csvData: {}
+      };
       
+      // Store all original data in csvData
       headers.forEach((header, i) => {
-        product[header] = values[i] || '';
+        if (product.csvData) {
+            product.csvData[header] = values[i] || '';
+        }
       });
 
+      // Map known fields
       product.product_name = values[nameIndex] || 'Okänd produkt';
       product.description = values[descIndex] || '';
       product.brand = brandIndex !== -1 ? values[brandIndex] : '';
