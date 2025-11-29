@@ -1,0 +1,5 @@
+{
+  "name": "WooCom Image Automator",
+  "description": "A smart tool to process CSV product lists, search/generate images using Gemini AI, and export for WooCommerce.",
+  "requestFramePermissions": []
+}
