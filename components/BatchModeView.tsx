@@ -33,6 +33,7 @@ export const BatchModeView: React.FC<BatchModeViewProps> = ({
   const [startTime, setStartTime] = useState<number | null>(null);
   const [speed, setSpeed] = useState<string>('--');
   const abortControllerRef = useRef<AbortController | null>(null);
+  const hasStartedRef = useRef(false);
 
   // Notify parent of running status
   useEffect(() => {
@@ -57,6 +58,8 @@ export const BatchModeView: React.FC<BatchModeViewProps> = ({
   }, [progress, status, startTime]);
 
   const handleStart = async () => {
+    if (hasStartedRef.current) return;
+    hasStartedRef.current = true;
     setStatus('running');
     setStartTime(Date.now());
     abortControllerRef.current = new AbortController();
@@ -85,6 +88,7 @@ export const BatchModeView: React.FC<BatchModeViewProps> = ({
   const handleStop = () => {
     abortControllerRef.current?.abort();
     setStatus('cancelled');
+    hasStartedRef.current = false;
   };
 
   const handleFinish = () => {

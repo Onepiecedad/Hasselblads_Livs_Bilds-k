@@ -631,6 +631,12 @@ const App: React.FC = () => {
                             <h1 className="text-2xl md:text-4xl font-bold text-stone-800 mb-4 serif-font">
                                 Hej! Här är status för din bildstudio.
                             </h1>
+                            {(auth.currentUser && !auth.currentUser.isAnonymous && cloudAvailable) && (
+                              <div className="mb-4 px-4 py-3 bg-emerald-50 border border-emerald-100 rounded-xl text-emerald-800 text-sm font-medium flex flex-col gap-1">
+                                <span>Molndata finns sparad. Klicka “Hämta moln” i headern för att fortsätta där du slutade på en annan enhet.</span>
+                                <span className="text-emerald-600 text-xs">Tips: När du är klar, klicka “Ladda upp” för att spara till molnet.</span>
+                              </div>
+                            )}
                             <p className="text-stone-500 text-sm md:text-lg mb-8 max-w-2xl mx-auto">
                                 {products.length === 0 
                                     ? "Ladda upp en CSV-lista för att komma igång."
