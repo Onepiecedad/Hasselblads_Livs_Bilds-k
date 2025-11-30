@@ -11,6 +11,8 @@ interface BatchModeViewProps {
   onStatusChange?: (isRunning: boolean) => void;
   onProductProcessed?: (product: ProcessedProduct) => void;
   onReview?: () => void;
+  isPaused?: boolean;
+  onTogglePause?: () => void;
 }
 
 type BatchStatus = 'idle' | 'running' | 'paused' | 'completed' | 'cancelled';
@@ -21,7 +23,9 @@ export const BatchModeView: React.FC<BatchModeViewProps> = ({
   onCancel,
   onStatusChange,
   onProductProcessed,
-  onReview
+  onReview,
+  isPaused = false,
+  onTogglePause
 }) => {
   const [status, setStatus] = useState<BatchStatus>('idle');
   const [progress, setProgress] = useState<BatchProgress | null>(null);
@@ -33,9 +37,15 @@ export const BatchModeView: React.FC<BatchModeViewProps> = ({
   // Notify parent of running status
   useEffect(() => {
       if (onStatusChange) {
-          onStatusChange(status === 'running');
+          onStatusChange(status === 'running' || status === 'paused');
       }
   }, [status, onStatusChange]);
+
+  // Sync pause flag from parent into local status label
+  useEffect(() => {
+    if (isPaused && status === 'running') setStatus('paused');
+    if (!isPaused && status === 'paused') setStatus('running');
+  }, [isPaused, status]);
 
   // Calculate speed (products per minute)
   useEffect(() => {
@@ -59,7 +69,8 @@ export const BatchModeView: React.FC<BatchModeViewProps> = ({
           delayBetweenProducts: 800, // Adjusted to avoid rate limits
           skipExistingImages: true,
           abortSignal: abortControllerRef.current.signal,
-          onProductProcessed: onProductProcessed
+          onProductProcessed: onProductProcessed,
+          isPaused: () => isPaused
         }
       );
 
@@ -163,17 +174,32 @@ export const BatchModeView: React.FC<BatchModeViewProps> = ({
                     : 'Låt AI beta av hela din lista automatiskt.'}
             </p>
           </div>
-          {status === 'running' && (
-              <div className="relative z-10 hidden sm:flex items-center gap-2 px-4 py-2 bg-emerald-800/50 text-emerald-100 rounded-full text-xs font-bold uppercase tracking-widest animate-pulse border border-emerald-700/50 shadow-lg">
-                  <Loader2 size={14} className="animate-spin text-amber-400" /> Körs nu
-              </div>
-          )}
+          <div className="flex items-center gap-3 relative z-10">
+            {(status === 'running' || status === 'paused') && (
+              <button
+                onClick={onTogglePause}
+                className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-full text-xs font-bold uppercase tracking-widest border border-white/20 transition-colors"
+              >
+                {isPaused ? 'Återuppta' : 'Pausa'}
+              </button>
+            )}
+            {status === 'running' && (
+                <div className="hidden sm:flex items-center gap-2 px-4 py-2 bg-emerald-800/50 text-emerald-100 rounded-full text-xs font-bold uppercase tracking-widest animate-pulse border border-emerald-700/50 shadow-lg">
+                    <Loader2 size={14} className="animate-spin text-amber-400" /> Körs nu
+                </div>
+            )}
+            {status === 'paused' && (
+                <div className="hidden sm:flex items-center gap-2 px-4 py-2 bg-amber-800/50 text-amber-50 rounded-full text-xs font-bold uppercase tracking-widest border border-amber-700/50 shadow-lg">
+                    Pausad
+                </div>
+            )}
+          </div>
       </div>
 
       <div className="p-5 md:p-8">
         
         {/* RUNNING DASHBOARD */}
-        {status === 'running' && progress ? (
+        {(status === 'running' || status === 'paused') && progress ? (
             <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
                 {/* Main Progress Bar Area */}
                 <div className="bg-emerald-950 rounded-2xl p-5 md:p-8 text-white shadow-2xl relative overflow-hidden border border-emerald-900">

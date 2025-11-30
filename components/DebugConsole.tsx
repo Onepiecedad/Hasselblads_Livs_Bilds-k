@@ -6,6 +6,7 @@ export const DebugConsole: React.FC = () => {
   const [isOpen, setIsOpen] = useState(false);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const endRef = useRef<HTMLDivElement>(null);
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'done' | 'error'>('idle');
 
   useEffect(() => {
     setLogs(logger.getHistory());
@@ -32,6 +33,23 @@ export const DebugConsole: React.FC = () => {
   }, [logs, isOpen]);
 
   const toggle = () => setIsOpen(!isOpen);
+  const handleCopy = async () => {
+    try {
+      const text = logs.map(l => {
+        const time = l.timestamp.toLocaleTimeString('sv-SE').split(' ')[0] + '.' + String(l.timestamp.getMilliseconds()).padStart(3, '0');
+        const level = l.level.toUpperCase();
+        const msg = l.message;
+        const details = l.details ? (typeof l.details === 'object' ? JSON.stringify(l.details) : String(l.details)) : '';
+        return `${time} [${level}] ${msg}${details ? ' | ' + details : ''}`;
+      }).join('\n');
+      await navigator.clipboard.writeText(text);
+      setCopyStatus('done');
+      setTimeout(() => setCopyStatus('idle'), 1500);
+    } catch {
+      setCopyStatus('error');
+      setTimeout(() => setCopyStatus('idle'), 1500);
+    }
+  };
 
   if (!isOpen) {
       return (
@@ -56,6 +74,13 @@ export const DebugConsole: React.FC = () => {
               </span>
           </div>
           <div className="flex items-center gap-2">
+              <button
+                onClick={handleCopy}
+                className="p-1 hover:text-emerald-400 transition-colors text-slate-200"
+                title="Kopiera alla loggar"
+              >
+                {copyStatus === 'done' ? 'Kopierad' : copyStatus === 'error' ? 'Fel' : 'Kopiera'}
+              </button>
               <button onClick={() => logger.clear()} className="p-1 hover:text-red-400 transition-colors" title="Clear Log"><Trash2 size={14} /></button>
               <button onClick={toggle} className="p-1 hover:text-white transition-colors" title="Close"><ChevronDown size={16} /></button>
           </div>

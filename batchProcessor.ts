@@ -34,13 +34,15 @@ export async function runBatchProcess(
     skipExistingImages?: boolean;
     abortSignal?: AbortSignal;
     onProductProcessed?: (product: ProcessedProduct) => void;
+    isPaused?: () => boolean;
   } = {}
 ): Promise<BatchResult> {
   const {
     delayBetweenProducts = 2000,
     skipExistingImages = true,
     abortSignal,
-    onProductProcessed
+    onProductProcessed,
+    isPaused
   } = options;
 
   logger.info(`Starting batch process for ${products.length} products`, { options });
@@ -50,6 +52,15 @@ export async function runBatchProcess(
   let completed = 0;
   let failed = 0;
   let skipped = 0;
+
+  const waitWhilePaused = async () => {
+    while (isPaused?.()) {
+      if (abortSignal?.aborted) {
+        throw new Error('Batch process aborted');
+      }
+      await delay(250);
+    }
+  };
 
   for (let i = 0; i < products.length; i++) {
     // Check for abort
@@ -65,6 +76,8 @@ export async function runBatchProcess(
     }
 
     const product = products[i] as ProcessedProduct;
+    await waitWhilePaused();
+
     // Skip already completed products if restarting a batch
     if (product.status === 'completed' && skipExistingImages) {
         results.push(product);
@@ -169,6 +182,7 @@ export async function runBatchProcess(
     }
 
     // logger.info(`Wait ${dynamicDelay}ms...`);
+    await waitWhilePaused();
     await delay(dynamicDelay);
   }
 

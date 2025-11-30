@@ -9,13 +9,22 @@ import { DebugConsole } from './components/DebugConsole';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ProductSidebar } from './components/ProductSidebar';
 import { Tooltip } from './components/Tooltip';
+import { AuthGate, UserBadge, SyncIndicator } from './components/AuthGate';
 import { Product, ProcessedProduct, AppStep } from './types';
 import { searchProductImages, setSearchConfig } from './geminiService';
 import { setCloudinaryConfig } from './cloudinaryService';
 import { saveState, loadState, hasSavedState, clearState } from './storageService';
 import { DEFAULT_CSV_CONTENT } from './constants/defaultData';
 import { parseCSVString } from './utils/csvParser';
-import { Layers, Undo2, Rocket, Hand, Filter, CheckCircle2, Zap, Save, Trash2, UploadCloud, PlayCircle, Download, ImageOff, Image as ImageIcon, Database, ShoppingBag, Settings, List, ChevronLeft, Loader2, ChevronDown, ChevronUp, RefreshCw, FileText, Edit3 } from 'lucide-react';
+import { Layers, Undo2, Rocket, Hand, Filter, CheckCircle2, Zap, Save, Trash2, UploadCloud, PlayCircle, Download, ImageOff, Image as ImageIcon, Database, ShoppingBag, Settings, List, ChevronLeft, Loader2, ChevronDown, ChevronUp, RefreshCw, FileText, Edit3, Cloud } from 'lucide-react';
+import {
+  saveProductsToCloud,
+  loadProductsFromCloud,
+  subscribeToProducts,
+  hasCloudData,
+  clearCloudData
+} from './syncService';
+import { auth, logOut } from './firebaseConfig';
 import { logger } from './logger';
 
 const App: React.FC = () => {
@@ -26,8 +35,15 @@ const App: React.FC = () => {
   const [filterOriginalImages, setFilterOriginalImages] = useState<boolean>(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isBatchRunning, setIsBatchRunning] = useState(false);
+  const [isBatchPaused, setIsBatchPaused] = useState(false);
+  const [cloudAvailable, setCloudAvailable] = useState(false);
+  const [checkingCloud, setCheckingCloud] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false); // For hiding reset buttons
   const prefetchingRef = useRef<Set<string>>(new Set());
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const unsubscribeRef = useRef<(() => void) | null>(null);
   
   // FIX: Keep a ref to products to access inside effects without adding it to dependencies
   const productsRef = useRef(products);
@@ -35,43 +51,73 @@ const App: React.FC = () => {
 
   // --- INITIAL LOAD ---
   useEffect(() => {
-    // 1. Config Migration: Check for the known broken key in LocalStorage and replace it
-    const OLD_BROKEN_KEY = 'AIzaSyAtSpe9Rm7Nm-SDQlM5utxWijbl_L3UG-o';
-    const CORRECT_KEY = 'AIzaSyAtSpe9Rm7Nm-SDqIM5utxWijbI_L3UG-o';
-    
-    let savedApiKey = localStorage.getItem('google_search_api_key');
-    
-    if (savedApiKey === OLD_BROKEN_KEY) {
-        logger.info('Detected broken API key in storage. Auto-migrating to correct key.');
-        localStorage.setItem('google_search_api_key', CORRECT_KEY);
-        savedApiKey = CORRECT_KEY;
-    }
-
-    const savedCx = localStorage.getItem('google_search_cx');
-    
-    const apiKeyToUse = savedApiKey || CORRECT_KEY;
-    const cxToUse = savedCx || 'b446eed8fbf424c0f';
-
-    logger.info(`Initializing Search Config. Key starts with: ${apiKeyToUse.substring(0, 5)}...`);
-    setSearchConfig(apiKeyToUse, cxToUse);
-
-    const savedCloud = localStorage.getItem('cloudinary_cloud_name') || 'da7wmiyra';
-    const savedPreset = localStorage.getItem('cloudinary_upload_preset') || 'woocom_upload';
-    setCloudinaryConfig(savedCloud, savedPreset);
-
-    if (hasSavedState()) {
-          const savedProducts = loadState();
-          if (savedProducts && savedProducts.length > 0) {
-              setProducts(savedProducts);
-              setStep(AppStep.DASHBOARD);
-          }
-      } else {
-          loadDefaultDataset();
-      }
+    const initializeApp = async () => {
+      // 1. Config Migration (behåll befintlig logik)
+      const OLD_BROKEN_KEY = 'AIzaSyAtSpe9Rm7Nm-SDQlM5utxWijbl_L3UG-o';
+      const CORRECT_KEY = 'AIzaSyAtSpe9Rm7Nm-SDqIM5utxWijbI_L3UG-o';
       
-      return () => {
-          prefetchingRef.current.clear();
-      };
+      let savedApiKey = localStorage.getItem('google_search_api_key');
+      
+      if (savedApiKey === OLD_BROKEN_KEY) {
+          logger.info('Detected broken API key in storage. Auto-migrating to correct key.');
+          localStorage.setItem('google_search_api_key', CORRECT_KEY);
+          savedApiKey = CORRECT_KEY;
+      }
+
+      const savedCx = localStorage.getItem('google_search_cx');
+      
+      const apiKeyToUse = savedApiKey || CORRECT_KEY;
+      const cxToUse = savedCx || 'b446eed8fbf424c0f';
+
+      logger.info(`Initializing Search Config. Key starts with: ${apiKeyToUse.substring(0, 5)}...`);
+      setSearchConfig(apiKeyToUse, cxToUse);
+
+      const savedCloud = localStorage.getItem('cloudinary_cloud_name') || 'da7wmiyra';
+      const savedPreset = localStorage.getItem('cloudinary_upload_preset') || 'woocom_upload';
+      setCloudinaryConfig(savedCloud, savedPreset);
+
+      // 2. Ladda lokal data om det finns
+      if (hasSavedState()) {
+        const savedProducts = loadState();
+        if (savedProducts && savedProducts.length > 0) {
+          setProducts(savedProducts);
+          setStep(AppStep.DASHBOARD);
+        }
+      } else {
+        // 3. Ladda default dataset om inget finns
+        loadDefaultDataset();
+      }
+
+      // 4. Kolla om molndata finns (utan att auto-ladda)
+      const user = auth.currentUser;
+      const isGoogleUser = user && !user.isAnonymous;
+      if (isGoogleUser) {
+        setCheckingCloud(true);
+        try {
+          const hasCloud = await hasCloudData();
+          setCloudAvailable(hasCloud);
+        } catch {
+          setCloudAvailable(false);
+        } finally {
+          setCheckingCloud(false);
+        }
+      } else {
+        setCloudAvailable(false);
+      }
+    };
+
+    // Vänta på att auth är klar innan vi initierar
+    const unsubAuth = auth.onAuthStateChanged(() => {
+      initializeApp();
+    });
+
+    return () => {
+      unsubAuth();
+      prefetchingRef.current.clear();
+      if (unsubscribeRef.current) {
+        unsubscribeRef.current();
+      }
+    };
   }, []);
 
   const loadDefaultDataset = () => {
@@ -91,18 +137,20 @@ const App: React.FC = () => {
 
   // --- AUTO SAVE ---
   useEffect(() => {
-      if (products.length > 0) {
-          const timeoutId = setTimeout(() => {
-              saveState(products);
-          }, 1000);
-          return () => clearTimeout(timeoutId);
-      }
+    if (products.length === 0) return;
+    
+    const timeoutId = setTimeout(async () => {
+      // Spara lokalt alltid (som backup)
+      saveState(products);
+    }, 4000); // 4 sekunders debounce för mindre belastning
+    
+    return () => clearTimeout(timeoutId);
   }, [products]);
 
   // --- PREFETCHING (Fixed Loop) ---
   useEffect(() => {
     if (step !== AppStep.PROCESS) return;
-    const PREFETCH_WINDOW = 10;
+    const PREFETCH_WINDOW = 3; // reduced to lighten background load
     
     const currentProducts = productsRef.current;
     
@@ -214,7 +262,10 @@ const App: React.FC = () => {
   };
 
   const handleConfigDone = () => setStep(AppStep.MODE_SELECT);
-  const startBatchMode = () => setStep(AppStep.BATCH);
+  const startBatchMode = () => {
+    setIsBatchPaused(false);
+    setStep(AppStep.BATCH);
+  };
   const startManualMode = () => {
       setReviewFilter('all');
       setFilterOriginalImages(false);
@@ -235,8 +286,14 @@ const App: React.FC = () => {
       setCurrentIndex(firstPending !== -1 ? firstPending : 0);
   };
 
+  const handleBatchStatusChange = (isActive: boolean) => {
+      setIsBatchRunning(isActive);
+      if (!isActive) setIsBatchPaused(false);
+  };
+
   const handleBatchComplete = (results: ProcessedProduct[]) => {
       setIsBatchRunning(false);
+      setIsBatchPaused(false);
       setProducts(results);
       saveState(results);
       const hasFailures = results.some(p => p.status !== 'completed');
@@ -258,6 +315,55 @@ const App: React.FC = () => {
     if (imageUrl.includes('cloudinary.com')) updated[currentIndex].cloudinaryUrl = imageUrl;
     setProducts(updated);
     moveToNext(updated);
+  };
+
+  const toggleBatchPause = () => {
+    setIsBatchPaused(prev => !prev);
+  };
+
+  const handleFetchCloud = async () => {
+    const user = auth.currentUser;
+    if (!user || user.isAnonymous) {
+      setSyncError('Logga in med Google för att hämta från molnet');
+      return;
+    }
+    setIsSyncing(true);
+    setSyncError(null);
+    try {
+      const cloudProducts = await loadProductsFromCloud();
+      setProducts(cloudProducts);
+      saveState(cloudProducts);
+      setStep(AppStep.DASHBOARD);
+      setLastSyncTime(new Date());
+      setCloudAvailable(true);
+    } catch (e: any) {
+      setSyncError('Kunde inte hämta molndata');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const handleUploadCloud = async () => {
+    const user = auth.currentUser;
+    if (!user || user.isAnonymous) {
+      setSyncError('Logga in med Google för att ladda upp till molnet');
+      return;
+    }
+    if (products.length === 0) {
+      setSyncError('Ingen data att ladda upp');
+      return;
+    }
+    setIsSyncing(true);
+    setSyncError(null);
+    try {
+      await saveProductsToCloud(products);
+      setLastSyncTime(new Date());
+      setCloudAvailable(true);
+    } catch (e: any) {
+      setSyncError('Kunde inte ladda upp molndata');
+    } finally {
+      setIsSyncing(false);
+    }
   };
 
   const handleProductSkip = () => {
@@ -323,14 +429,38 @@ const App: React.FC = () => {
       }
   }
 
-  const resetApp = () => {
-    if(confirm("Är du säker? Detta raderar all data.")) {
-        clearState();
-        setProducts([]);
-        setCurrentIndex(0);
-        setStep(AppStep.UPLOAD);
-        prefetchingRef.current.clear();
-        setShowAdvanced(false);
+  const resetApp = async () => {
+    if(confirm("Är du säker? Detta raderar all data, både lokalt och i molnet.")) {
+      // Rensa lokal data
+      clearState();
+      
+      // Rensa molndata om inloggad
+      const user = auth.currentUser;
+      if (user && !user.isAnonymous) {
+        try {
+          await clearCloudData();
+        } catch (e) {
+          logger.warn('Kunde inte rensa molndata');
+        }
+      }
+      
+      setProducts([]);
+      setCurrentIndex(0);
+      setStep(AppStep.UPLOAD);
+      prefetchingRef.current.clear();
+      setShowAdvanced(false);
+      setIsBatchPaused(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await logOut();
+    } finally {
+      setProducts([]);
+      setCurrentIndex(0);
+      setStep(AppStep.UPLOAD);
+      prefetchingRef.current.clear();
     }
   };
 
@@ -341,20 +471,21 @@ const App: React.FC = () => {
   const missingImageCount = products.filter(p => !p.initialImages || p.initialImages.length === 0).length;
 
   return (
-    <ErrorBoundary>
-      <div className="min-h-screen flex flex-col font-sans text-stone-900 pb-20 bg-stone-50 selection:bg-emerald-200 selection:text-emerald-900">
-        
-        {/* HEADER */}
-        <header className="bg-emerald-900 text-white h-16 flex items-center justify-between px-4 md:px-6 sticky top-0 z-30 shadow-md">
-          <div className="flex items-center gap-3 cursor-pointer" onClick={() => setStep(AppStep.DASHBOARD)}>
-            <div className="bg-white/10 p-1.5 rounded-lg border border-white/10">
-              <ShoppingBag size={20} className="text-amber-400" />
+    <AuthGate>
+      <ErrorBoundary>
+        <div className="min-h-screen flex flex-col font-sans text-stone-900 pb-20 bg-stone-50 selection:bg-emerald-200 selection:text-emerald-900">
+          
+          {/* HEADER */}
+          <header className="bg-emerald-900 text-white h-16 flex items-center justify-between px-4 md:px-6 sticky top-0 z-30 shadow-md">
+            <div className="flex items-center gap-3 cursor-pointer" onClick={() => setStep(AppStep.DASHBOARD)}>
+              <div className="bg-white/10 p-1.5 rounded-lg border border-white/10">
+                <ShoppingBag size={20} className="text-amber-400" />
+              </div>
+              <div>
+                <h1 className="font-bold text-lg tracking-wide serif-font leading-none">Hasselblads</h1>
+                <span className="text-[10px] text-emerald-200 uppercase tracking-widest font-medium">Bildstudio</span>
+              </div>
             </div>
-            <div>
-              <h1 className="font-bold text-lg tracking-wide serif-font leading-none">Hasselblads</h1>
-              <span className="text-[10px] text-emerald-200 uppercase tracking-widest font-medium">Bildstudio</span>
-            </div>
-          </div>
 
           {step === AppStep.PROCESS ? (
             <div className="flex-1 flex items-center justify-end gap-3 ml-4">
@@ -371,6 +502,15 @@ const App: React.FC = () => {
                       <Loader2 size={14} className="animate-spin text-amber-400" />
                   </button>
                 </>
+              )}
+              {isBatchRunning && (
+                <button
+                  onClick={toggleBatchPause}
+                  className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-xs font-bold uppercase tracking-widest rounded-lg border border-white/10 text-emerald-50"
+                  title="Pausa/återuppta batch"
+                >
+                  {isBatchPaused ? 'Återuppta' : 'Pausa'}
+                </button>
               )}
 
               <button onClick={moveToPrevious} className="p-2 text-emerald-300 hover:text-white transition-colors" title="Föregående (Ctrl+Pil Vänster)">
@@ -424,14 +564,57 @@ const App: React.FC = () => {
               <button onClick={() => setStep(AppStep.DASHBOARD)} className="ml-2 text-emerald-300 hover:text-white font-medium text-xs border-l border-emerald-800 pl-4">
                   Avsluta
               </button>
+              <button 
+                onClick={handleLogout} 
+                className="ml-2 text-emerald-200 hover:text-white bg-white/10 px-3 py-1.5 rounded-lg text-xs font-medium border border-white/10"
+                title="Logga ut"
+              >
+                Logga ut
+              </button>
             </div>
           ) : (
-              <button 
-                  onClick={() => setStep(AppStep.CONFIGURE)}
+              <div className="flex items-center gap-3">
+                <SyncIndicator syncing={isSyncing} lastSync={lastSyncTime} error={syncError} />
+                {isBatchRunning && (
+                  <button
+                    onClick={toggleBatchPause}
+                    className="flex items-center gap-2 text-emerald-200 hover:text-white hover:bg-white/10 px-3 py-1.5 rounded-lg transition-colors text-sm font-medium border border-emerald-800/60"
+                  >
+                    {isBatchPaused ? 'Återuppta batch' : 'Pausa batch'}
+                  </button>
+                )}
+                {(auth.currentUser && !auth.currentUser.isAnonymous) && (
+                  <>
+                    <button
+                      onClick={handleFetchCloud}
+                      className="flex items-center gap-2 text-emerald-200 hover:text-white hover:bg-white/10 px-3 py-1.5 rounded-lg transition-colors text-sm font-medium"
+                      disabled={isSyncing || checkingCloud}
+                    >
+                      Hämta moln
+                    </button>
+                    <button
+                      onClick={handleUploadCloud}
+                      className="flex items-center gap-2 text-emerald-200 hover:text-white hover:bg-white/10 px-3 py-1.5 rounded-lg transition-colors text-sm font-medium disabled:opacity-50"
+                      disabled={isSyncing || products.length === 0}
+                    >
+                      Ladda upp
+                    </button>
+                  </>
+                )}
+                <button 
+                    onClick={() => setStep(AppStep.CONFIGURE)}
+                    className="flex items-center gap-2 text-emerald-200 hover:text-white hover:bg-white/10 px-3 py-1.5 rounded-lg transition-colors text-sm font-medium"
+                >
+                    <Settings size={16} /> Inställningar
+                </button>
+                <button 
+                  onClick={handleLogout} 
                   className="flex items-center gap-2 text-emerald-200 hover:text-white hover:bg-white/10 px-3 py-1.5 rounded-lg transition-colors text-sm font-medium"
-              >
-                  <Settings size={16} /> Inställningar
-              </button>
+                >
+                  Logga ut
+                </button>
+                <UserBadge />
+              </div>
           )}
         </header>
 
@@ -625,9 +808,11 @@ const App: React.FC = () => {
                         products={products} 
                         onComplete={handleBatchComplete} 
                         onCancel={() => setStep(AppStep.DASHBOARD)} 
-                        onStatusChange={setIsBatchRunning}
+                        onStatusChange={handleBatchStatusChange}
                         onProductProcessed={handleRealtimeProductUpdate}
                         onReview={handleReviewDuringBatch}
+                        isPaused={isBatchPaused}
+                        onTogglePause={toggleBatchPause}
                     />
                 </div>
             )}
@@ -659,8 +844,9 @@ const App: React.FC = () => {
 
         </main>
         <DebugConsole />
-      </div>
-    </ErrorBoundary>
+        </div>
+      </ErrorBoundary>
+    </AuthGate>
   );
 };
 
