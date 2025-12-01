@@ -16,16 +16,22 @@ import { logger } from './logger';
 const DEFAULT_PROJECT_ID = 'default';
 
 // Helper functions for Firestore paths
-const getProductsRef = (userId: string, projectId: string = DEFAULT_PROJECT_ID) =>
-  collection(db, 'users', userId, 'projects', projectId, 'products');
+// WE MUST CHECK IF db IS VALID BEFORE CALLING collection()
+const getProductsRef = (userId: string, projectId: string = DEFAULT_PROJECT_ID) => {
+    if (!db) throw new Error("Database not initialized");
+    return collection(db, 'users', userId, 'projects', projectId, 'products');
+};
 
-const getMetaRef = (userId: string, projectId: string = DEFAULT_PROJECT_ID) =>
-  doc(db, 'users', userId, 'projects', projectId, 'meta');
+const getMetaRef = (userId: string, projectId: string = DEFAULT_PROJECT_ID) => {
+    if (!db) throw new Error("Database not initialized");
+    return doc(db, 'users', userId, 'projects', projectId, 'meta');
+};
 
 /**
  * Identify device type for tracking which device made changes
  */
 const getDeviceName = (): string => {
+  if (typeof navigator === 'undefined') return 'Server/Unknown';
   const ua = navigator.userAgent.toLowerCase();
   if (/iphone|ipad|ipod/.test(ua)) return 'iPhone/iPad';
   if (/android/.test(ua)) return 'Android';
@@ -38,61 +44,75 @@ const getDeviceName = (): string => {
  * Save a single product to Firestore
  */
 export const saveProductToCloud = async (product: ProcessedProduct): Promise<void> => {
+  if (!db || !auth) return; // Silent return if offline
   const user = auth.currentUser;
-  if (!user) throw new Error('Ej inloggad');
+  if (!user) return; // Silent return if not logged in
 
-  const productRef = doc(getProductsRef(user.uid), product.id);
-
-  // Remove transient/non-serializable data before saving
-  const productData = { ...product };
-  delete (productData as any).prefetchedResults;
-
-  await setDoc(productRef, {
-    ...productData,
-    updatedAt: Timestamp.now(),
-    updatedBy: getDeviceName()
-  }, { merge: true });
-};
-
-/**
- * Batch save multiple products (more efficient for large updates)
- * Firestore allows max 500 operations per batch, we use 450 for margin
- */
-export const saveProductsToCloud = async (products: ProcessedProduct[]): Promise<void> => {
-  const user = auth.currentUser;
-  if (!user) throw new Error('Ej inloggad');
-
-  const BATCH_SIZE = 450;
-  const productsRef = getProductsRef(user.uid);
-
-  for (let i = 0; i < products.length; i += BATCH_SIZE) {
-    const batch = writeBatch(db);
-    const chunk = products.slice(i, i + BATCH_SIZE);
-
-    chunk.forEach(product => {
+  try {
+      const productRef = doc(getProductsRef(user.uid), product.id);
+    
+      // Remove transient/non-serializable data before saving
       const productData = { ...product };
       delete (productData as any).prefetchedResults;
-
-      const ref = doc(productsRef, product.id);
-      batch.set(ref, {
+    
+      await setDoc(productRef, {
         ...productData,
         updatedAt: Timestamp.now(),
         updatedBy: getDeviceName()
       }, { merge: true });
-    });
-
-    await batch.commit();
-    logger.info(`Synkade ${Math.min(i + BATCH_SIZE, products.length)}/${products.length} till molnet`);
+  } catch (e) {
+      // Ignore network errors in silent mode
+      console.warn("Save to cloud failed", e);
   }
+};
 
-  // Update project metadata
-  await updateProjectMeta(user.uid, products);
+/**
+ * Batch save multiple products (more efficient for large updates)
+ */
+export const saveProductsToCloud = async (products: ProcessedProduct[]): Promise<void> => {
+  if (!db || !auth) return;
+  const user = auth.currentUser;
+  if (!user) throw new Error('Ej inloggad');
+
+  const BATCH_SIZE = 450;
+  
+  try {
+      const productsRef = getProductsRef(user.uid);
+    
+      for (let i = 0; i < products.length; i += BATCH_SIZE) {
+        if (!db) break;
+        const batch = writeBatch(db);
+        const chunk = products.slice(i, i + BATCH_SIZE);
+    
+        chunk.forEach(product => {
+          const productData = { ...product };
+          delete (productData as any).prefetchedResults;
+    
+          const ref = doc(productsRef, product.id);
+          batch.set(ref, {
+            ...productData,
+            updatedAt: Timestamp.now(),
+            updatedBy: getDeviceName()
+          }, { merge: true });
+        });
+    
+        await batch.commit();
+        logger.info(`Synkade ${Math.min(i + BATCH_SIZE, products.length)}/${products.length} till molnet`);
+      }
+    
+      // Update project metadata
+      await updateProjectMeta(user.uid, products);
+  } catch (e) {
+      console.error("Batch sync failed", e);
+      throw e;
+  }
 };
 
 /**
  * Load all products from Firestore
  */
 export const loadProductsFromCloud = async (): Promise<ProcessedProduct[]> => {
+  if (!db || !auth) throw new Error('Cloud offline');
   const user = auth.currentUser;
   if (!user) throw new Error('Ej inloggad');
 
@@ -122,45 +142,57 @@ export const subscribeToProducts = (
   onUpdate: (products: ProcessedProduct[]) => void,
   onError: (error: Error) => void
 ): Unsubscribe => {
+  // Defensive check: If DB failed to load, simply don't subscribe.
+  if (!db || !auth) {
+      console.warn("Cloud sync disabled (Environment restricted or offline)");
+      return () => {}; 
+  }
+
   const user = auth.currentUser;
   if (!user) {
-    onError(new Error('Ej inloggad'));
+    // Not logged in is not an error, just no subscription
     return () => {};
   }
 
-  const productsRef = getProductsRef(user.uid);
-
-  const unsubscribe = onSnapshot(
-    productsRef,
-    (snapshot) => {
-      const products: ProcessedProduct[] = [];
-      snapshot.forEach(docSnap => {
-        const data = docSnap.data();
-        products.push({
-          ...data,
-          id: docSnap.id
-        } as ProcessedProduct);
-      });
-
-      // Sort by original order
-      products.sort((a, b) => a.id.localeCompare(b.id));
-
-      logger.info(`Realtidsuppdatering: ${products.length} produkter`);
-      onUpdate(products);
-    },
-    (error) => {
-      logger.error('Sync-fel', error.message);
-      onError(error);
-    }
-  );
-
-  return unsubscribe;
+  try {
+      const productsRef = getProductsRef(user.uid);
+    
+      const unsubscribe = onSnapshot(
+        productsRef,
+        (snapshot) => {
+          const products: ProcessedProduct[] = [];
+          snapshot.forEach(docSnap => {
+            const data = docSnap.data();
+            products.push({
+              ...data,
+              id: docSnap.id
+            } as ProcessedProduct);
+          });
+    
+          // Sort by original order
+          products.sort((a, b) => a.id.localeCompare(b.id));
+    
+          logger.info(`Realtidsuppdatering: ${products.length} produkter`);
+          onUpdate(products);
+        },
+        (error) => {
+          logger.error('Sync-fel', error.message);
+          onError(error);
+        }
+      );
+    
+      return unsubscribe;
+  } catch (e) {
+      console.warn("Failed to subscribe to cloud changes", e);
+      return () => {};
+  }
 };
 
 /**
  * Update project metadata
  */
 const updateProjectMeta = async (userId: string, products: ProcessedProduct[]): Promise<void> => {
+  if (!db) return;
   const metaRef = getMetaRef(userId);
 
   await setDoc(metaRef, {
@@ -177,6 +209,7 @@ const updateProjectMeta = async (userId: string, products: ProcessedProduct[]): 
  * Check if cloud data exists for current user
  */
 export const hasCloudData = async (): Promise<boolean> => {
+  if (!db || !auth) return false;
   const user = auth.currentUser;
   if (!user) return false;
 
@@ -198,6 +231,7 @@ export const getCloudMeta = async (): Promise<{
   lastEditedBy: string;
   updatedAt: Date;
 } | null> => {
+  if (!db || !auth) return null;
   const user = auth.currentUser;
   if (!user) return null;
 
@@ -222,6 +256,7 @@ export const getCloudMeta = async (): Promise<{
  * Clear all cloud data for current user (for reset functionality)
  */
 export const clearCloudData = async (): Promise<void> => {
+  if (!db || !auth) return;
   const user = auth.currentUser;
   if (!user) throw new Error('Ej inloggad');
 

@@ -8,6 +8,8 @@ interface AuthGateProps {
 }
 
 export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
+  /* 
+  // --- AUTH LOGIC TEMPORARILY DISABLED ---
   const ALLOWED_EMAILS = new Set([
     'joakim@skylandai.se',
     'axel.hasselblad@gmail.com'
@@ -79,7 +81,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
     return (
       <div className="min-h-screen flex items-center justify-center bg-stone-50 p-4">
         <div className="max-w-md w-full bg-white rounded-2xl shadow-xl border border-stone-200 overflow-hidden">
-          {/* Header */}
+          
           <div className="bg-emerald-900 p-8 text-center relative overflow-hidden">
             <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-10"></div>
             <div className="relative z-10">
@@ -91,7 +93,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
             </div>
           </div>
           
-          {/* Login options */}
+          
           <div className="p-8 space-y-4">
             <button
               onClick={handleGoogleSignIn}
@@ -127,8 +129,9 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
       </div>
     );
   }
-
-  // Logged in - render children
+  */
+ 
+  // Pass-through to children (Auth bypassed)
   return <>{children}</>;
 };
 

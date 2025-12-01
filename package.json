@@ -6,15 +6,14 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview",
-    "deploy": "firebase deploy --only hosting"
+    "preview": "vite preview"
   },
   "dependencies": {
-    "@google/genai": "^1.30.0",
-    "firebase": "^12.6.0",
-    "lucide-react": "^0.554.0",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "@google/genai": "^1.30.0",
+    "lucide-react": "^0.554.0",
+    "react-dom": "^19.2.0",
+    "firebase": "^12.6.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

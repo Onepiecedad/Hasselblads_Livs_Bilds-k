@@ -7,13 +7,13 @@ import {
   onAuthStateChanged, 
   signOut,
   setPersistence,
-  browserSessionPersistence,
   browserLocalPersistence,
-  User 
+  User,
+  Auth
 } from 'firebase/auth';
 import {
   getFirestore,
-  enableIndexedDbPersistence
+  Firestore
 } from 'firebase/firestore';
 import { logger } from './logger';
 
@@ -27,29 +27,35 @@ const firebaseConfig = {
   appId: "1:906146481810:web:0d7989d0cce6fb9173484b"
 };
 
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
-export const auth = getAuth(app);
-export const db = getFirestore(app);
+// Initialize Firebase defensively
+let app;
+let auth: Auth | null = null;
+let db: Firestore | null = null;
 
-// Enable offline persistence (fails gracefully if not supported)
-enableIndexedDbPersistence(db).catch((err) => {
-  if (err.code === 'failed-precondition') {
-    logger.warn('Firestore persistence failed: Multiple tabs open');
-  } else if (err.code === 'unimplemented') {
-    logger.warn('Firestore persistence not available in this browser');
+try {
+  // Check if we are in a restricted environment where Firebase might fail
+  if (typeof window !== 'undefined') {
+      app = initializeApp(firebaseConfig);
+      // Initialize services
+      auth = getAuth(app);
+      db = getFirestore(app);
   }
-});
+} catch (error) {
+  console.warn("Firebase initialization failed (Running in offline/local mode):", error);
+  // We leave auth and db as null. 
+  // The syncService must check for null before using them.
+}
 
-// Auth helpers
+export { auth, db };
+
+// Auth helpers with safety checks
 export const signInWithGoogle = async (): Promise<User> => {
+  if (!auth) throw new Error("Cloud service unavailable (Offline mode)");
   const provider = new GoogleAuthProvider();
-  // Force session persistence so every new tab requires login
   try {
-    await setPersistence(auth, browserSessionPersistence);
-  } catch {
-    // fallback not critical
     await setPersistence(auth, browserLocalPersistence);
+  } catch (e) {
+    console.warn("Persistence warning (likely environment restriction)", e);
   }
   const result = await signInWithPopup(auth, provider);
   logger.success(`Inloggad som ${result.user.displayName}`);
@@ -57,10 +63,11 @@ export const signInWithGoogle = async (): Promise<User> => {
 };
 
 export const signInAnon = async (): Promise<User> => {
+  if (!auth) throw new Error("Cloud service unavailable (Offline mode)");
   try {
-    await setPersistence(auth, browserSessionPersistence);
-  } catch {
     await setPersistence(auth, browserLocalPersistence);
+  } catch (e) {
+    console.warn("Persistence warning", e);
   }
   const result = await signInAnonymously(auth);
   logger.info('Anonym session startad');
@@ -68,16 +75,22 @@ export const signInAnon = async (): Promise<User> => {
 };
 
 export const logOut = async (): Promise<void> => {
-  await signOut(auth);
-  logger.info('Utloggad');
+  if (auth) {
+    await signOut(auth);
+    logger.info('Utloggad');
+  }
 };
 
-export const getCurrentUser = (): User | null => auth.currentUser;
+export const getCurrentUser = (): User | null => auth?.currentUser || null;
 
 export const onAuthChange = (callback: (user: User | null) => void): (() => void) => {
-  return onAuthStateChanged(auth, callback);
+  if (auth) {
+    return onAuthStateChanged(auth, callback);
+  }
+  // If auth failed to load, we just never trigger the callback, effectively staying "logged out"
+  return () => {};
 };
 
 export const isAnonymousUser = (): boolean => {
-  return auth.currentUser?.isAnonymous ?? false;
+  return auth?.currentUser?.isAnonymous ?? false;
 };

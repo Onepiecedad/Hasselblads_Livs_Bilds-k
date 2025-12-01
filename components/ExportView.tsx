@@ -1,7 +1,7 @@
 
 import React from 'react';
 import { ProcessedProduct } from '../types';
-import { Download, CheckCircle, RefreshCcw, AlertTriangle, Cloud, ArrowRight } from 'lucide-react';
+import { Download, CheckCircle, RefreshCcw, AlertTriangle, Cloud, ArrowRight, Package } from 'lucide-react';
 
 interface ExportViewProps {
   products: ProcessedProduct[];
@@ -38,51 +38,80 @@ const ExportView: React.FC<ExportViewProps> = ({ products, onReset }) => {
   };
 
   return (
-    <div className="flex flex-col items-center justify-center h-full bg-white rounded-2xl shadow-xl border border-stone-200 p-6 md:p-10 max-w-4xl mx-auto md:mt-10">
-      <div className="w-24 h-24 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mb-6 shadow-sm border border-emerald-100">
-        <CheckCircle size={48} />
+    <div className="flex flex-col items-center justify-center h-full bg-white rounded-3xl shadow-xl border border-stone-200 p-8 md:p-12 max-w-5xl mx-auto md:mt-10 animate-in slide-in-from-bottom-8 duration-700">
+      
+      <div className="relative mb-8">
+          <div className="absolute inset-0 bg-emerald-100 rounded-full blur-xl opacity-50 animate-pulse"></div>
+          <div className="w-28 h-28 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center relative shadow-lg border-4 border-white">
+            <CheckCircle size={56} className="drop-shadow-sm" />
+          </div>
       </div>
-      <h2 className="text-3xl md:text-4xl font-bold text-emerald-950 mb-3 serif-font text-center">Processen är klar</h2>
-      <p className="text-stone-500 mb-10 text-center max-w-lg text-lg">
-        Ditt sortiment är nu uppdaterat med nya bilder och redo för WooCommerce.
+
+      <h2 className="text-4xl md:text-5xl font-bold text-emerald-950 mb-4 serif-font text-center tracking-tight">Processen är klar</h2>
+      <p className="text-stone-500 mb-12 text-center max-w-xl text-lg font-light leading-relaxed">
+        Ditt sortiment är nu uppdaterat med nya bilder och all data är redo för att exporteras direkt till WooCommerce.
       </p>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full mb-10">
-          <div className="p-6 bg-stone-50 rounded-xl border border-stone-200 text-center">
-              <div className="text-4xl font-bold text-emerald-900 serif-font">{completedCount}</div>
-              <div className="text-xs text-stone-400 uppercase font-bold tracking-widest mt-1">Behandlade</div>
-          </div>
-          <div className="p-6 bg-emerald-50 rounded-xl border border-emerald-100 text-center">
-              <div className="text-4xl font-bold text-emerald-600 flex items-center justify-center gap-2 serif-font">
-                  {cloudCount} <Cloud size={24} className="text-emerald-400" />
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full mb-12">
+          <div className="p-8 bg-white rounded-3xl border border-stone-100 text-center shadow-lg shadow-stone-200/50 hover:-translate-y-1 transition-transform duration-300">
+              <div className="w-12 h-12 bg-stone-50 rounded-2xl flex items-center justify-center mx-auto mb-4 text-stone-400">
+                  <Package size={24} />
               </div>
-              <div className="text-xs text-emerald-700/60 uppercase font-bold tracking-widest mt-1">Moln-länkar</div>
+              <div className="text-5xl font-bold text-stone-800 serif-font mb-2">{completedCount}</div>
+              <div className="text-xs text-stone-400 uppercase font-bold tracking-widest">Klara Produkter</div>
           </div>
-          <div className="p-6 bg-amber-50 rounded-xl border border-amber-100 text-center">
-               <div className="text-4xl font-bold text-amber-600 serif-font">{localCount}</div>
-               <div className="text-xs text-amber-700/60 uppercase font-bold tracking-widest mt-1">Lokala filer</div>
+          
+          <div className="p-8 bg-emerald-900 rounded-3xl border border-emerald-800 text-center shadow-xl shadow-emerald-900/20 hover:-translate-y-1 transition-transform duration-300 relative overflow-hidden group">
+              <div className="absolute top-0 right-0 p-20 bg-emerald-800 rounded-full blur-2xl -translate-y-1/2 translate-x-1/2 opacity-50 group-hover:opacity-75 transition-opacity"></div>
+              <div className="relative z-10">
+                  <div className="w-12 h-12 bg-emerald-800 rounded-2xl flex items-center justify-center mx-auto mb-4 text-emerald-200">
+                      <Cloud size={24} />
+                  </div>
+                  <div className="text-5xl font-bold text-white serif-font mb-2 flex items-center justify-center gap-2">
+                      {cloudCount} 
+                  </div>
+                  <div className="text-xs text-emerald-300 uppercase font-bold tracking-widest">Moln-länkar</div>
+              </div>
+          </div>
+          
+          <div className={`p-8 rounded-3xl border text-center shadow-lg hover:-translate-y-1 transition-transform duration-300 ${localCount > 0 ? 'bg-amber-50 border-amber-100 shadow-amber-100/50' : 'bg-white border-stone-100 shadow-stone-200/50'}`}>
+               <div className={`w-12 h-12 rounded-2xl flex items-center justify-center mx-auto mb-4 ${localCount > 0 ? 'bg-amber-100 text-amber-600' : 'bg-stone-50 text-stone-400'}`}>
+                  <AlertTriangle size={24} />
+               </div>
+               <div className={`text-5xl font-bold serif-font mb-2 ${localCount > 0 ? 'text-amber-600' : 'text-stone-300'}`}>{localCount}</div>
+               <div className={`text-xs uppercase font-bold tracking-widest ${localCount > 0 ? 'text-amber-600/70' : 'text-stone-400'}`}>Lokala filer</div>
           </div>
       </div>
       
       {localCount > 0 && (
-          <div className="mb-6 p-4 bg-amber-50 border border-amber-200 text-amber-900 text-sm rounded-xl flex gap-3 items-start max-w-lg">
-              <AlertTriangle className="shrink-0 mt-0.5 text-amber-600" size={20} />
-              <p>Varning: {localCount} bilder är inte uppladdade till molnet (Base64). Konfigurera Cloudinary för att få korrekta URL:er till din butik.</p>
+          <div className="mb-8 p-5 bg-amber-50 border border-amber-200 text-amber-900 text-sm rounded-2xl flex gap-4 items-start max-w-xl shadow-sm">
+              <div className="bg-amber-100 p-2 rounded-lg shrink-0 text-amber-600">
+                  <AlertTriangle size={20} />
+              </div>
+              <div>
+                  <h4 className="font-bold mb-1">Varning: Lokala bilder</h4>
+                  <p className="opacity-90 leading-relaxed">Du har {localCount} bilder som inte är uppladdade till molnet (Base64). Dessa kommer göra din CSV-fil väldigt stor. Konfigurera Cloudinary i inställningarna för att få korrekta URL:er.</p>
+              </div>
           </div>
       )}
 
       {failedCount > 0 && (
-          <div className="mb-6 p-4 bg-stone-100 border border-stone-200 text-stone-600 text-sm rounded-xl flex gap-3 items-start max-w-lg">
-              <AlertTriangle className="shrink-0 mt-0.5 text-stone-400" size={20} />
-              <p>{failedCount} produkter saknar fortfarande bild (hoppades över eller misslyckades).</p>
+          <div className="mb-8 p-5 bg-stone-100 border border-stone-200 text-stone-600 text-sm rounded-2xl flex gap-4 items-start max-w-xl shadow-sm">
+              <div className="bg-stone-200 p-2 rounded-lg shrink-0 text-stone-500">
+                  <AlertTriangle size={20} />
+              </div>
+               <div>
+                  <h4 className="font-bold mb-1">Ej kompletta produkter</h4>
+                  <p className="opacity-90 leading-relaxed">{failedCount} produkter saknar fortfarande bild (hoppades över eller misslyckades). Du kan gå tillbaka och fixa dem manuellt.</p>
+              </div>
           </div>
       )}
 
-      <div className="flex flex-col sm:flex-row gap-4 w-full sm:w-auto">
-        <button onClick={onReset} className="w-full sm:w-auto flex items-center justify-center gap-2 px-8 py-4 rounded-xl border-2 border-stone-200 text-stone-500 hover:text-emerald-900 hover:border-emerald-900 font-bold transition-colors">
+      <div className="flex flex-col sm:flex-row gap-5 w-full sm:w-auto">
+        <button onClick={onReset} className="w-full sm:w-auto flex items-center justify-center gap-2 px-8 py-5 rounded-2xl border-2 border-stone-200 text-stone-500 hover:text-emerald-900 hover:border-emerald-900 font-bold transition-all hover:bg-stone-50">
           <RefreshCcw size={20} /> Tillbaka till start
         </button>
-        <button onClick={downloadCSV} className="w-full sm:w-auto flex items-center justify-center gap-3 bg-emerald-900 hover:bg-emerald-800 text-white px-10 py-4 rounded-xl font-bold shadow-xl shadow-emerald-900/20 transition-all hover:-translate-y-1">
+        <button onClick={downloadCSV} className="w-full sm:w-auto flex items-center justify-center gap-3 bg-emerald-900 hover:bg-emerald-800 text-white px-12 py-5 rounded-2xl font-bold shadow-2xl shadow-emerald-900/30 transition-all hover:-translate-y-1 hover:shadow-emerald-900/40 border border-emerald-800 text-lg">
           <Download size={24} className="text-amber-400" /> Ladda ner CSV-fil
         </button>
       </div>

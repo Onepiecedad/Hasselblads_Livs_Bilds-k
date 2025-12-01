@@ -1,4 +1,4 @@
-import React, { Component, ErrorInfo, ReactNode } from 'react';
+import React, { ErrorInfo, ReactNode } from 'react';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 
 interface ErrorBoundaryProps {
@@ -10,11 +10,14 @@ interface ErrorBoundaryState {
   error: Error | null;
 }
 
-export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
-  state: ErrorBoundaryState = {
-    hasError: false,
-    error: null
-  };
+export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
+    super(props);
+    this.state = {
+      hasError: false,
+      error: null
+    };
+  }
 
   static getDerivedStateFromError(error: Error): ErrorBoundaryState {
     return { hasError: true, error };
@@ -48,7 +51,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
             </div>
             <button
               onClick={this.handleReset}
-              className="flex items-center justify-center gap-2 w-full bg-emerald-900 hover:bg-emerald-800 text-white py-3 px-6 rounded-xl font-bold transition-colors"
+              className="flex items-center justify-center gap-2 w-full bg-emerald-900 hover:bg-emerald-500 text-white py-3 px-6 rounded-xl font-bold transition-colors"
             >
               <RefreshCw size={18} /> Ladda om appen
             </button>

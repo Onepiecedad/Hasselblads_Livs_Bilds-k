@@ -1,12 +1,13 @@
+
 import React, { useState, useEffect, useRef } from 'react';
-import { Terminal, ChevronDown, Trash2 } from 'lucide-react';
+import { Terminal, ChevronDown, Trash2, Copy, Check } from 'lucide-react';
 import { logger, LogEntry } from '../logger';
 
 export const DebugConsole: React.FC = () => {
   const [isOpen, setIsOpen] = useState(false);
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [copied, setCopied] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
-  const [copyStatus, setCopyStatus] = useState<'idle' | 'done' | 'error'>('idle');
 
   useEffect(() => {
     setLogs(logger.getHistory());
@@ -14,8 +15,6 @@ export const DebugConsole: React.FC = () => {
         if (entry.id === 'clear') {
             setLogs([]);
         } else {
-            // Functional update to avoid dependency issues
-            // Limit to last 100 logs in the UI to prevent DOM performance issues
             setLogs(prev => {
                 const newLogs = [...prev, entry];
                 if (newLogs.length > 100) return newLogs.slice(-100);
@@ -33,22 +32,27 @@ export const DebugConsole: React.FC = () => {
   }, [logs, isOpen]);
 
   const toggle = () => setIsOpen(!isOpen);
-  const handleCopy = async () => {
-    try {
+
+  const handleCopy = () => {
       const text = logs.map(l => {
-        const time = l.timestamp.toLocaleTimeString('sv-SE').split(' ')[0] + '.' + String(l.timestamp.getMilliseconds()).padStart(3, '0');
-        const level = l.level.toUpperCase();
-        const msg = l.message;
-        const details = l.details ? (typeof l.details === 'object' ? JSON.stringify(l.details) : String(l.details)) : '';
-        return `${time} [${level}] ${msg}${details ? ' | ' + details : ''}`;
+          const time = l.timestamp.toLocaleTimeString('sv-SE');
+          let detailsStr = '';
+          try {
+              if (l.details) {
+                  detailsStr = typeof l.details === 'object' 
+                    ? ` | ${JSON.stringify(l.details)}` 
+                    : ` | ${String(l.details)}`;
+              }
+          } catch (e) {
+              detailsStr = ' | [Circular/Error]';
+          }
+          return `[${time}] [${l.level.toUpperCase()}] ${l.message}${detailsStr}`;
       }).join('\n');
-      await navigator.clipboard.writeText(text);
-      setCopyStatus('done');
-      setTimeout(() => setCopyStatus('idle'), 1500);
-    } catch {
-      setCopyStatus('error');
-      setTimeout(() => setCopyStatus('idle'), 1500);
-    }
+
+      navigator.clipboard.writeText(text).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 2000);
+      });
   };
 
   if (!isOpen) {
@@ -74,13 +78,15 @@ export const DebugConsole: React.FC = () => {
               </span>
           </div>
           <div className="flex items-center gap-2">
-              <button
-                onClick={handleCopy}
-                className="p-1 hover:text-emerald-400 transition-colors text-slate-200"
-                title="Kopiera alla loggar"
+              <button 
+                onClick={handleCopy} 
+                className={`p-1.5 rounded transition-all flex items-center gap-1.5 ${copied ? 'bg-green-900/50 text-green-400' : 'hover:bg-slate-700 text-slate-300 hover:text-white'}`} 
+                title="Kopiera hela loggen"
               >
-                {copyStatus === 'done' ? 'Kopierad' : copyStatus === 'error' ? 'Fel' : 'Kopiera'}
+                  {copied ? <Check size={14} /> : <Copy size={14} />}
+                  <span className="font-bold">{copied ? 'Kopierad!' : 'Kopiera logg'}</span>
               </button>
+              <div className="w-px h-3 bg-slate-600 mx-1"></div>
               <button onClick={() => logger.clear()} className="p-1 hover:text-red-400 transition-colors" title="Clear Log"><Trash2 size={14} /></button>
               <button onClick={toggle} className="p-1 hover:text-white transition-colors" title="Close"><ChevronDown size={16} /></button>
           </div>

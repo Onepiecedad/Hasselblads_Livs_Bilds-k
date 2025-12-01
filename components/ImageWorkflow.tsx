@@ -1,14 +1,15 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { ProcessedProduct, SearchResult, ChatMessage } from '../types';
 import { searchProductImages, editProductImage, urlToBase64, generateProductImage } from '../geminiService';
 import { uploadToCloudinary, isCloudinaryConfigured } from '../cloudinaryService';
 import { TEMPLATES } from '../constants';
-import { Image as ImageIcon, Loader2, ArrowRight, SkipForward, AlertCircle, Wand2, RefreshCw, Upload, LayoutTemplate, ImageOff, Search, Save, X, Plus, CheckCircle2, ChevronLeft, ZoomIn, Sparkles, Camera } from 'lucide-react';
+import { Image as ImageIcon, Loader2, ArrowRight, SkipForward, AlertCircle, Wand2, RefreshCw, Upload, LayoutTemplate, ImageOff, Search, Save, X, Plus, CheckCircle2, ChevronLeft, Sparkles, Camera, Undo2, Redo2, Grid, MessageSquarePlus, Tag, Info, DollarSign, Package, BarChart } from 'lucide-react';
 import { Tooltip } from './Tooltip';
 
 interface ImageWorkflowProps {
   product: ProcessedProduct;
-  onComplete: (imageUrl: string) => void;
+  onComplete: (imageUrl: string, updatedMetadata?: Partial<ProcessedProduct>) => void;
   onSkip: () => void;
   onPrevious: () => void;
 }
@@ -27,30 +28,30 @@ const ImageResultItem: React.FC<ImageResultItemProps> = ({ res, idx, isSelected,
     return (
         <div 
             onClick={onClick}
-            className={`group relative bg-white rounded-xl overflow-hidden cursor-pointer shadow-sm transition-all border flex-shrink-0 ${
+            className={`group relative bg-white rounded-xl overflow-hidden cursor-pointer shadow-sm transition-all duration-300 flex-shrink-0 ${
                 small ? 'w-20 h-20' : 'aspect-square'
             } ${
                 isSelected 
-                ? 'ring-4 ring-amber-500 border-amber-500 scale-[0.98] z-10 shadow-lg' 
-                : 'hover:shadow-md hover:ring-2 hover:ring-emerald-200 border-stone-200'
+                ? 'ring-[3px] ring-emerald-500 shadow-xl scale-[0.98] z-10' 
+                : 'hover:shadow-lg hover:-translate-y-1 hover:ring-2 hover:ring-emerald-100 border border-stone-100'
             }`}
         >
             {!small && (
-                <div className={`absolute top-2 right-2 text-white text-[10px] font-bold px-1.5 py-0.5 rounded backdrop-blur-sm z-20 transition-opacity ${isSelected ? 'bg-amber-600 opacity-100' : 'bg-black/50 opacity-0 group-hover:opacity-100'}`}>
-                    {idx + 1}
+                <div className={`absolute top-2 right-2 text-white text-[10px] font-bold px-2 py-0.5 rounded-full backdrop-blur-md z-20 transition-all ${isSelected ? 'bg-emerald-600 opacity-100' : 'bg-black/40 opacity-0 group-hover:opacity-100'}`}>
+                    #{idx + 1}
                 </div>
             )}
 
             {error ? (
                 <div className="w-full h-full flex flex-col items-center justify-center bg-stone-50 text-stone-300">
-                    <ImageOff size={small ? 16 : 24} />
-                    {!small && <span className="text-[10px] mt-1 text-stone-400">Bild saknas</span>}
+                    <ImageOff size={small ? 16 : 32} />
+                    {!small && <span className="text-[10px] mt-2 font-medium text-stone-400">Bild saknas</span>}
                 </div>
             ) : (
                 <img 
                     src={res.url} 
                     alt={res.title} 
-                    className="w-full h-full object-contain p-1.5" 
+                    className="w-full h-full object-contain p-2 bg-white" 
                     onError={() => setError(true)}
                     referrerPolicy="no-referrer"
                 />
@@ -58,7 +59,7 @@ const ImageResultItem: React.FC<ImageResultItemProps> = ({ res, idx, isSelected,
             {!error && !small && (
                 <>
                     <div className="absolute inset-0 bg-emerald-900/0 group-hover:bg-emerald-900/5 transition-colors" />
-                    <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div className="absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-all duration-300 translate-y-2 group-hover:translate-y-0">
                         <p className="text-white text-[10px] font-medium truncate">{res.source}</p>
                     </div>
                 </>
@@ -68,12 +69,16 @@ const ImageResultItem: React.FC<ImageResultItemProps> = ({ res, idx, isSelected,
 };
 
 const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSkip, onPrevious }) => {
-  const [step, setStep] = useState<'SEARCH' | 'EDIT' | 'TEMPLATES'>('SEARCH');
+  const [step, setStep] = useState<'SEARCH' | 'EDIT' | 'TEMPLATES' | 'GENERATE'>('SEARCH');
+  const [lastStep, setLastStep] = useState<'SEARCH' | 'TEMPLATES' | 'GENERATE'>('SEARCH'); 
+  
+  // IMAGE STATE
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false); 
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [selectedImageUrl, setSelectedImageUrl] = useState<string | null>(null);
+  const [hasEdits, setHasEdits] = useState(false); 
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -82,19 +87,28 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
   const [statusMsg, setStatusMsg] = useState('');
   const [customSearchQuery, setCustomSearchQuery] = useState(product.product_name);
   const [searchChips, setSearchChips] = useState<{label: string, active: boolean}[]>([]);
+  const [generationPrompt, setGenerationPrompt] = useState('');
+  const [history, setHistory] = useState<string[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
 
-  // Zoom State
-  const [zoomState, setZoomState] = useState({ show: false, x: 0, y: 0 });
-  const [isZoomLocked, setIsZoomLocked] = useState(false);
-  const imageContainerRef = useRef<HTMLDivElement>(null);
+  // DATA FORM STATE
+  const [formData, setFormData] = useState({
+      product_name: product.product_name || '',
+      brand: product.brand || '',
+      description: product.description || '',
+      sku: product.csvData?.['Artikelnummer'] || product.csvData?.['sku'] || '',
+      price: product.csvData?.['Pris'] || product.csvData?.['Regular Price'] || product.csvData?.['Ordinarie pris'] || '',
+      sale_price: product.csvData?.['Sale Price'] || product.csvData?.['Rabatterat pris'] || '',
+      stock_qty: product.csvData?.['Lagersaldo'] || product.csvData?.['Stock'] || '',
+      categories: product.csvData?.['Huvudkategori'] || product.csvData?.['Categories'] || '',
+      extra_csv_fields: product.csvData || {}
+  });
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const resultsContainerRef = useRef<HTMLDivElement>(null);
-  const galleryScrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   
-  // Track mount status to prevent setting state on unmounted component
   const isMounted = useRef(true);
 
   useEffect(() => {
@@ -103,6 +117,7 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
   }, []);
 
   useEffect(() => {
+    // 1. Image Init
     let initialResults: SearchResult[] = [];
     if (product.prefetchedResults && product.prefetchedResults.length > 0) {
         initialResults = product.prefetchedResults;
@@ -115,7 +130,8 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
     setSearchAttempts(0);
     setStatusMsg('');
     setCustomSearchQuery(product.product_name);
-    
+    setGenerationPrompt(`Photorealistic professional studio photography of ${product.product_name}. Pure white background. Soft commercial lighting. 4k resolution. Sharp focus on the product.`);
+
     const words = product.product_name.split(' ').filter(w => w.length > 1);
     if (product.brand) words.push(product.brand);
     const uniqueChips = [...new Set(words)].map(w => ({ label: w, active: true }));
@@ -124,10 +140,38 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
     if (initialResults.length === 0 && step === 'SEARCH' && product.status !== 'failed') {
       performSearch(product.product_name);
     }
-    setSelectedImage(null);
-    setSelectedImageUrl(null);
-    setStep('SEARCH'); // Ensure reset to SEARCH on new product
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    
+    if (product.finalImageUrl) {
+        if (product.finalImageUrl.startsWith('data:')) {
+             setSelectedImage(product.finalImageUrl);
+             initHistory(product.finalImageUrl);
+        } else {
+             setSelectedImageUrl(product.finalImageUrl);
+        }
+    } else {
+        setSelectedImage(null);
+        setSelectedImageUrl(null);
+        setHistory([]);
+        setHistoryIndex(-1);
+    }
+    
+    setHasEdits(false);
+    setStep('SEARCH'); 
+    setLastStep('SEARCH');
+
+    // 2. Form Init
+    setFormData({
+      product_name: product.product_name || '',
+      brand: product.brand || '',
+      description: product.description || '',
+      sku: product.csvData?.['Artikelnummer'] || product.csvData?.['sku'] || product.csvData?.['Art.nr'] || '',
+      price: product.csvData?.['Pris'] || product.csvData?.['Regular Price'] || product.csvData?.['Ordinarie pris'] || '',
+      sale_price: product.csvData?.['Sale Price'] || product.csvData?.['Rabatterat pris'] || '',
+      stock_qty: product.csvData?.['Lagersaldo'] || product.csvData?.['Stock'] || product.csvData?.['Lagerstatus'] || '',
+      categories: product.csvData?.['Huvudkategori'] || product.csvData?.['Categories'] || '',
+      extra_csv_fields: product.csvData || {}
+    });
+
   }, [product.id]);
 
   useEffect(() => {
@@ -137,17 +181,63 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
               const num = parseInt(e.key);
               if (!isNaN(num) && num > 0 && num <= searchResults.length) handleImageSelect(searchResults[num - 1].url);
           }
-          if (e.key === 'Enter') {
-              if (selectedImageUrl || selectedImage) finalizeImage();
+          if (e.key === 'ArrowRight' && !selectedImageUrl && !selectedImage && step === 'SEARCH') onSkip();
+          if (e.key === 'ArrowLeft' && !selectedImageUrl && !selectedImage && step === 'SEARCH') onPrevious();
+          
+          if (step === 'EDIT' && (e.metaKey || e.ctrlKey) && e.key === 'z') {
+              e.preventDefault();
+              if (e.shiftKey) handleRedo();
+              else handleUndo();
           }
-          if (e.key === 'ArrowRight' && !selectedImageUrl && !selectedImage) onSkip();
-          if (e.key === 'ArrowLeft' && !selectedImageUrl && !selectedImage) onPrevious();
       };
       window.addEventListener('keydown', handleKeyDown);
       return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [searchResults, selectedImageUrl, selectedImage, step, isLoading, onSkip, onPrevious]);
+  }, [searchResults, selectedImageUrl, selectedImage, step, isLoading, onSkip, onPrevious, historyIndex, history]);
 
   useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, [chatMessages]);
+
+  const changeStep = (newStep: 'SEARCH' | 'EDIT' | 'TEMPLATES' | 'GENERATE') => {
+      if (step !== 'EDIT' && newStep !== 'EDIT') {
+          setLastStep(newStep as 'SEARCH' | 'TEMPLATES' | 'GENERATE');
+      }
+      setStep(newStep);
+  };
+
+  const handleFormChange = (field: string, value: string) => {
+      setFormData(prev => ({ ...prev, [field]: value }));
+  };
+
+  const initHistory = (initialImage: string) => {
+      setHistory([initialImage]);
+      setHistoryIndex(0);
+  };
+
+  const pushToHistory = (newImage: string) => {
+      const newHistory = history.slice(0, historyIndex + 1);
+      newHistory.push(newImage);
+      setHistory(newHistory);
+      setHistoryIndex(newHistory.length - 1);
+      setSelectedImage(newImage);
+      setHasEdits(true);
+  };
+
+  const handleUndo = () => {
+      if (historyIndex > 0) {
+          const newIndex = historyIndex - 1;
+          setHistoryIndex(newIndex);
+          setSelectedImage(history[newIndex]);
+          if (newIndex === 0) setHasEdits(false);
+      }
+  };
+
+  const handleRedo = () => {
+      if (historyIndex < history.length - 1) {
+          const newIndex = historyIndex + 1;
+          setHistoryIndex(newIndex);
+          setSelectedImage(history[newIndex]);
+          setHasEdits(true);
+      }
+  };
 
   const performSearch = async (overrideQuery?: string) => {
     setIsLoading(true);
@@ -180,21 +270,23 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
   const handleImageSelect = async (url: string) => {
     setIsLoading(true);
     setSelectedImageUrl(url);
+    setHasEdits(false); 
     setIsEditable(true);
-    setChatMessages([]); // Reset chat
+    setChatMessages([]);
     try {
       const base64DataUri = await urlToBase64(url);
       if (!isMounted.current) return;
       setSelectedImage(base64DataUri);
+      initHistory(base64DataUri);
       setStep('EDIT');
     } catch (e: any) {
       if (!isMounted.current) return;
       if (e.message === 'CORS_ERROR' || e.message === 'TIMEOUT' || e.message === 'URL_IS_HTML') {
-         // Fallback: If we can't download it (CORS/Proxy fail), keep the URL and let Cloudinary try backend upload
          setSelectedImageUrl(url); 
          setSelectedImage(null); 
          setIsEditable(false); 
          setStep('EDIT');
+         setHistory([]);
       } else { 
          setError("Kunde inte ladda bilden."); 
       }
@@ -217,16 +309,17 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
       setError(null);
       setSelectedImage(null);
       setSelectedImageUrl(null);
+      setHasEdits(true); 
       
       try {
-          // Immediately generate image from scratch
-          const generatedBase64 = await generateProductImage(product.product_name);
+          const generatedBase64 = await generateProductImage(product.product_name, generationPrompt);
           if (!isMounted.current) return;
           
           setSelectedImage(generatedBase64);
+          initHistory(generatedBase64);
           setStep('EDIT');
           setIsEditable(true);
-          setChatMessages([{ role: 'model', text: 'Här är en nyskapad studiobild av produkten.' }]);
+          setChatMessages([{ role: 'model', text: 'Här är en nyskapad studiobild.' }]);
 
       } catch (err: any) {
           if (isMounted.current) setError("Kunde inte generera bild. Försök igen.");
@@ -236,7 +329,6 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
   };
 
   const handleStandardPolish = () => {
-      // "Magic Button" prompt
       const STANDARD_POLISH_PROMPT = "Professional studio retouch. Pure white background, soft commercial lighting, realistic soft shadows under the object. Remove any text, logos or watermarks. Make the product look fresh and high quality. No text overlay.";
       handleSendMessage(STANDARD_POLISH_PROMPT);
   };
@@ -249,7 +341,12 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
     reader.onload = (event) => {
       const result = event.target?.result as string;
       if(isMounted.current) {
-          setSelectedImage(result); setSelectedImageUrl(null); setStep('EDIT'); setIsEditable(true);
+          setSelectedImage(result); 
+          setSelectedImageUrl(null); 
+          initHistory(result);
+          setHasEdits(true);
+          setStep('EDIT'); 
+          setIsEditable(true);
           setChatMessages([]);
       }
     };
@@ -269,7 +366,9 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
       if (!isMounted.current) return;
       
       if (newImageBase64) {
-         setSelectedImage(newImageBase64); setSelectedImageUrl(null); setIsEditable(true); 
+         pushToHistory(newImageBase64);
+         setSelectedImageUrl(null); 
+         setIsEditable(true); 
          setChatMessages(prev => [...prev, { role: 'model', text: 'Klar! Hur ser det ut?', image: newImageBase64, isImageGeneration: true }]);
       } else {
          setChatMessages(prev => [...prev, { role: 'model', text: 'Kunde inte generera bild. Prova igen.' }]);
@@ -284,328 +383,478 @@ const ImageWorkflow: React.FC<ImageWorkflowProps> = ({ product, onComplete, onSk
   const finalizeImage = async () => {
     setIsSaving(true);
     let finalUrl = '';
+    
     try {
-        if (selectedImage) finalUrl = selectedImage; else if (selectedImageUrl) finalUrl = selectedImageUrl;
-        if (!finalUrl) { setIsSaving(false); return; }
-        if (isCloudinaryConfigured()) {
-            try {
-                const uploadSource = selectedImage || finalUrl;
-                const cloudUrl = await uploadToCloudinary(uploadSource);
-                finalUrl = cloudUrl; 
-            } catch (cloudError) { console.warn('Cloudinary upload failed, falling back to local.', cloudError); }
+        let uploadSource = '';
+        if (selectedImageUrl && !hasEdits) {
+            uploadSource = selectedImageUrl;
+        } else {
+            uploadSource = selectedImage || selectedImageUrl || '';
         }
-        if(isMounted.current) onComplete(finalUrl);
+
+        if (uploadSource) {
+            if (isCloudinaryConfigured()) {
+                try {
+                    const cloudUrl = await uploadToCloudinary(uploadSource);
+                    finalUrl = cloudUrl; 
+                } catch (cloudError) { 
+                    console.warn('Cloudinary upload failed, falling back to local.', cloudError);
+                    finalUrl = hasEdits ? (selectedImage || '') : (selectedImageUrl || selectedImage || '');
+                }
+            } else {
+                 finalUrl = hasEdits ? (selectedImage || '') : (selectedImageUrl || selectedImage || '');
+            }
+        }
+        
+        const updatedCsvData = { ...formData.extra_csv_fields };
+        
+        if (formData.sku) updatedCsvData['Artikelnummer'] = formData.sku;
+        if (formData.price) updatedCsvData['Ordinarie pris'] = formData.price;
+        if (formData.sale_price) updatedCsvData['Rabatterat pris'] = formData.sale_price;
+        if (formData.stock_qty) updatedCsvData['Lagersaldo'] = formData.stock_qty;
+        if (formData.categories) updatedCsvData['Huvudkategori'] = formData.categories;
+        
+        updatedCsvData['Namn'] = formData.product_name;
+        updatedCsvData['Varumärke'] = formData.brand;
+        updatedCsvData['Beskrivning'] = formData.description;
+
+        const updatedMetadata: Partial<ProcessedProduct> = {
+            product_name: formData.product_name,
+            brand: formData.brand,
+            description: formData.description,
+            csvData: updatedCsvData
+        };
+
+        if(isMounted.current) {
+             onComplete(finalUrl || product.finalImageUrl || '', updatedMetadata);
+        }
+
     } catch (e) { 
-        if (isMounted.current) { setError('Kunde inte spara bilden.'); setIsSaving(false); }
+        if (isMounted.current) { setError('Kunde inte spara produkten.'); setIsSaving(false); }
     }
   };
 
-  // Zoom handlers
-  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!imageContainerRef.current || isZoomLocked) return;
-    const { left, top, width, height } = imageContainerRef.current.getBoundingClientRect();
-    const x = ((e.clientX - left) / width) * 100;
-    const y = ((e.clientY - top) / height) * 100;
-    setZoomState({ show: true, x, y });
-  };
-
-  const handleMouseEnter = () => {
-      if (!isZoomLocked) setZoomState(prev => ({ ...prev, show: true }));
-  };
-
-  const handleMouseLeave = () => {
-      if (!isZoomLocked) setZoomState(prev => ({ ...prev, show: false }));
-  };
-
-  const toggleZoomLock = (e: React.MouseEvent) => {
-      e.stopPropagation(); // Prevent bubbling if necessary
-      if (isZoomLocked) {
-          setIsZoomLocked(false);
-          setZoomState(prev => ({ ...prev, show: false }));
-      } else {
-          // Snap to center or keep current position if hovering
-          setIsZoomLocked(true);
-          setZoomState(prev => ({ ...prev, show: true }));
-      }
-  };
-
   const handleTemplateSelect = (template: typeof TEMPLATES[0]) => {
-    setSelectedImage(null); setSelectedImageUrl(null); setStep('EDIT'); setIsEditable(true);
+    setSelectedImage(null); 
+    setSelectedImageUrl(null); 
+    setHasEdits(true);
+    setHistory([]);
+    setHistoryIndex(-1);
+    setStep('EDIT'); 
+    setIsEditable(true);
     setChatMessages([{ role: 'model', text: `Skapar bild med mall: ${template.label}...` }]);
     handleSendMessage(`Create a ${template.prompt} of a product named "${product.product_name}".`);
   };
 
-  if (step === 'SEARCH' || step === 'TEMPLATES') {
-    return (
-      <div className="flex flex-col h-full bg-stone-50/50">
-        <div className="mb-2 px-4 py-4 bg-white border-b border-stone-200 sticky top-0 z-10 shadow-sm">
-           <div className="flex justify-between items-start">
-               <div>
-                   <h3 className="text-lg md:text-2xl font-bold text-emerald-950 leading-tight serif-font">{product.product_name}</h3>
-                   <div className="flex flex-wrap items-center gap-2 md:gap-3 mt-1.5">
-                        {product.brand && (
-                                <span className="bg-amber-100 text-amber-900 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-widest border border-amber-200">
-                                    {product.brand}
-                                </span>
-                        )}
-                        <p className="text-stone-500 text-xs md:text-sm truncate max-w-lg">{product.description}</p>
-                   </div>
-               </div>
-               <div className="text-right hidden sm:block">
-                   <div className="text-[10px] text-stone-400 font-mono bg-stone-100 px-2 py-1 rounded">
-                       [1-9] Välj | [Enter] Spara
-                   </div>
-               </div>
-           </div>
-        </div>
-
-        {error && (
-          <div className="mx-4 mb-4 p-3 bg-red-50 text-red-800 rounded-lg flex items-center gap-2 border border-red-100 text-sm">
-            <AlertCircle size={16} /> <span>{error}</span>
-          </div>
-        )}
-
-        {step === 'SEARCH' && (
-             <div className="mb-4 px-4">
-                <div className="flex gap-2 mb-3">
-                    <div className="relative flex-1">
-                        <input 
-                            ref={searchInputRef} type="text" value={customSearchQuery}
-                            onChange={(e) => setCustomSearchQuery(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && performSearch()}
-                            placeholder="Sök..."
-                            className="w-full bg-white border border-stone-300 rounded-lg pl-10 pr-3 py-2.5 text-sm focus:border-emerald-600 focus:ring-1 focus:ring-emerald-200 outline-none transition-all shadow-sm font-medium"
-                        />
-                        <Search size={18} className="absolute left-3 top-2.5 text-stone-400" />
-                    </div>
-                    <button onClick={() => performSearch()} disabled={isLoading} className="bg-emerald-900 hover:bg-emerald-800 text-white px-5 py-2 rounded-lg text-sm font-bold transition-colors disabled:opacity-70 shadow-sm">
-                        Sök
-                    </button>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                    {searchChips.map((chip, idx) => (
-                        <button key={idx} onClick={() => handleChipClick(idx)}
-                            className={`text-[11px] px-2.5 py-1 rounded-full border transition-all flex items-center gap-1 font-medium ${
-                                chip.active 
-                                ? 'bg-stone-800 text-white border-stone-800 hover:bg-stone-700' 
-                                : 'bg-white text-stone-400 border-stone-200 hover:border-stone-400 decoration-stone-400 line-through'
-                            }`}
-                        >
-                            {chip.active ? <CheckCircle2 size={12} /> : <X size={12} />} {chip.label}
-                        </button>
-                    ))}
-                    <button onClick={() => setStep('TEMPLATES')} className="text-[11px] px-2.5 py-1 rounded-full border border-blue-200 text-blue-700 bg-blue-50 hover:bg-blue-100 flex items-center gap-1 font-medium">
-                        <LayoutTemplate size={12} /> Mallar
-                    </button>
-                </div>
-             </div>
-        )}
-
-        {step === 'TEMPLATES' ? (
-             <div className="flex-1 overflow-y-auto custom-scrollbar p-4 pt-0">
-                 <button onClick={() => setStep('SEARCH')} className="mb-4 text-xs text-stone-500 flex items-center gap-1 hover:text-stone-800 font-medium">
-                     <ArrowRight className="rotate-180" size={14} /> Tillbaka till sök
-                 </button>
-                <div className="grid grid-cols-2 gap-4 pb-4">
-                    {TEMPLATES.map(t => (
-                        <div key={t.id} onClick={() => handleTemplateSelect(t)} className="bg-white p-4 rounded-xl border border-stone-200 hover:border-emerald-500 hover:shadow-lg hover:shadow-emerald-500/10 cursor-pointer transition-all flex flex-col items-center text-center group">
-                            <div className="w-12 h-12 bg-emerald-50 text-emerald-700 rounded-full flex items-center justify-center mb-3 group-hover:scale-110 transition-transform">
-                                <LayoutTemplate size={24} />
-                            </div>
-                            <h4 className="font-bold text-emerald-950 text-sm serif-font">{t.label}</h4>
-                            <p className="text-xs text-stone-500 mt-1 line-clamp-2">{t.prompt}</p>
-                        </div>
-                    ))}
-                </div>
-             </div>
-        ) : (
-             isLoading && searchResults.length === 0 ? (
-                <div className="flex-1 flex flex-col items-center justify-center text-stone-400">
-                    <Loader2 className="w-10 h-10 animate-spin text-emerald-600 mb-3" />
-                    <p className="text-sm font-medium text-stone-500 animate-pulse">Hämtar bilder...</p>
-                </div>
-                ) : (
-                <div className="flex-1 overflow-y-auto px-4 custom-scrollbar pb-20" ref={resultsContainerRef}>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pb-4">
-                    
-                    {/* STANDARD MAGIC BUTTON */}
-                    <div 
-                        onClick={handleStandardGenerate} 
-                        className="aspect-square bg-gradient-to-br from-emerald-50 to-emerald-100 border-2 border-emerald-300 hover:border-emerald-500 rounded-xl flex flex-col items-center justify-center text-emerald-800 cursor-pointer transition-all group shadow-sm hover:shadow-md relative overflow-hidden"
-                    >
-                         <div className="absolute inset-0 bg-white/50 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                         <div className="relative z-10 flex flex-col items-center text-center p-2">
-                             <div className="bg-white p-3 rounded-full shadow-sm mb-2 group-hover:scale-110 transition-transform text-emerald-600">
-                                 <Sparkles size={24} className="fill-emerald-100" />
-                             </div>
-                             <span className="text-sm font-bold leading-tight">Skapa<br/>Studiobild</span>
-                             <span className="text-[10px] text-emerald-600 mt-1 uppercase font-bold tracking-wide">AI Auto</span>
-                         </div>
-                    </div>
-
-                    <div onClick={handleUploadClick} className="aspect-square bg-white border-2 border-dashed border-stone-300 hover:border-stone-500 hover:bg-stone-50 rounded-xl flex flex-col items-center justify-center text-stone-500 cursor-pointer transition-all group">
-                        <Upload size={24} className="mb-2 group-hover:scale-110 transition-transform" />
-                        <span className="text-xs font-bold uppercase tracking-wide">Ladda upp</span>
-                        <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileChange} />
-                    </div>
-                    {searchResults.map((res, idx) => (
-                        <ImageResultItem key={`${res.url}-${idx}`} res={res} idx={idx} isSelected={false} onClick={() => handleImageSelect(res.url)} />
-                    ))}
-                    </div>
-                </div>
-            )
-        )}
-
-        <div className="mt-auto p-3 md:p-4 border-t border-stone-200 flex justify-between gap-4 bg-white sticky bottom-0 z-20 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
-           <div className="flex gap-2">
-               <button onClick={onPrevious} className="flex items-center gap-2 text-stone-500 hover:text-stone-800 px-3 md:px-4 py-2.5 bg-stone-100 hover:bg-stone-200 rounded-lg text-xs md:text-sm font-bold transition-colors">
-                 <ChevronLeft size={18} /> <span className="hidden sm:inline">Föregående</span>
-               </button>
-               <button onClick={onSkip} className="flex items-center gap-2 text-stone-500 hover:text-stone-800 px-3 md:px-4 py-2.5 bg-stone-100 hover:bg-stone-200 rounded-lg text-xs md:text-sm font-bold transition-colors">
-                 <SkipForward size={18} /> <span className="hidden sm:inline">Hoppa över</span>
-               </button>
-           </div>
-           {step === 'SEARCH' && (
-             <button onClick={() => performSearch()} disabled={isLoading} className="flex items-center gap-2 text-emerald-700 hover:text-emerald-900 text-sm font-bold">
-                <RefreshCw size={16} className={isLoading ? 'animate-spin' : ''} /> <span className="hidden sm:inline">Ladda fler</span>
-             </button>
-           )}
-        </div>
-      </div>
-    );
-  }
-
-  // --- EDIT VIEW ---
-  const displayImage = selectedImageUrl || selectedImage;
   return (
-    <div className="flex flex-col h-full bg-stone-50/50">
+    <div className="flex flex-col h-full bg-stone-50">
       
-      {/* GALLERY STRIP */}
-      <div className="bg-white border-b border-stone-200 p-3 shadow-sm z-10">
-          <div className="flex items-center gap-3 overflow-x-auto pb-1 custom-scrollbar" ref={galleryScrollRef}>
-              <span className="text-[10px] font-bold text-stone-400 uppercase tracking-widest shrink-0 mr-1">Galleri</span>
-              {searchResults.map((res, idx) => (
-                  <ImageResultItem 
-                      key={`thumb-${idx}`} 
-                      res={res} 
-                      idx={idx} 
-                      isSelected={res.url === selectedImageUrl} 
-                      onClick={() => handleImageSelect(res.url)} 
-                      small={true}
-                  />
-              ))}
+      {/* GLOBAL HEADER */}
+      <div className="p-4 bg-emerald-950 border-b border-emerald-900 flex justify-between items-center text-white shrink-0 sticky top-0 z-30 shadow-md">
+          <button onClick={onPrevious} className="flex items-center gap-2 text-emerald-200 hover:text-white transition-colors hover:bg-white/10 px-3 py-1.5 rounded-lg">
+              <ChevronLeft size={20} /> <span className="font-bold text-sm hidden md:inline">Föregående</span>
+          </button>
+          
+          <div className="text-center">
+              <h3 className="font-bold text-base md:text-lg text-white line-clamp-1 max-w-md serif-font tracking-wide">{formData.product_name || product.product_name}</h3>
+              <p className="text-[10px] text-emerald-400 uppercase tracking-widest font-medium">Produktredigering</p>
+          </div>
+
+          <div className="flex items-center gap-3">
               <button 
-                  onClick={() => performSearch()} 
-                  disabled={isLoading}
-                  className="w-20 h-20 shrink-0 bg-stone-50 border border-stone-200 hover:border-emerald-400 hover:bg-emerald-50 rounded-xl flex flex-col items-center justify-center text-stone-400 hover:text-emerald-600 transition-colors gap-1"
+                onClick={onSkip}
+                className="text-emerald-300 hover:text-white text-xs font-bold px-3 py-2 rounded-lg hover:bg-white/10 transition-colors"
               >
-                  <RefreshCw size={16} className={isLoading ? 'animate-spin' : ''} />
-                  <span className="text-[10px] font-bold">Fler</span>
+                  Hoppa över
+              </button>
+              <button 
+                onClick={finalizeImage} 
+                disabled={isSaving}
+                className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-bold transition-all shadow-lg ${isSaving ? 'bg-emerald-900 text-emerald-400' : 'bg-white text-emerald-900 hover:bg-emerald-50 hover:-translate-y-0.5'}`}
+              >
+                  {isSaving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
+                  <span>{isSaving ? 'Sparar...' : 'Spara Allt'}</span>
               </button>
           </div>
       </div>
 
-      <div className="flex-1 flex flex-col md:flex-row gap-4 md:gap-6 overflow-hidden p-4 md:p-6">
-        {/* IMAGE PREVIEW WITH ZOOM */}
-        <div 
-           ref={imageContainerRef}
-           className={`h-64 shrink-0 md:h-auto md:flex-1 bg-white rounded-2xl flex items-center justify-center p-4 md:p-8 relative overflow-hidden shadow-sm border border-stone-200 group transition-colors ${zoomState.show ? 'cursor-zoom-in' : ''}`}
-           onMouseMove={handleMouseMove}
-           onMouseEnter={handleMouseEnter}
-           onMouseLeave={handleMouseLeave}
-           onClick={toggleZoomLock}
-        >
-           <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-[0.03] pointer-events-none"></div>
-           
-           {displayImage ? (
-             <>
-                <img 
-                    src={displayImage} 
-                    className="w-full h-full object-contain drop-shadow-2xl z-10" 
-                    alt="Selected" 
-                    style={{
-                        transformOrigin: zoomState.show ? `${zoomState.x}% ${zoomState.y}%` : 'center center',
-                        transform: zoomState.show ? 'scale(2)' : 'scale(1)',
-                        // Snappy transition when panning (zoomed), smooth when resetting
-                        transition: zoomState.show ? 'transform 0.1s ease-out' : 'transform 0.4s ease-out'
-                    }}
-                />
-                
-                {/* Zoom Hint Overlay */}
-                {!zoomState.show && (
-                    <div className="absolute top-4 right-4 bg-white/90 p-2 rounded-full shadow-sm text-stone-400 pointer-events-none z-20">
-                        <ZoomIn size={16} />
+      <div className="flex-1 overflow-hidden">
+          <div className="h-full flex flex-col xl:flex-row">
+              
+              {/* LEFT COLUMN: IMAGE WORKFLOW (60%) */}
+              <div className="flex-1 flex flex-col border-r border-stone-200 bg-white relative">
+                 
+                 {/* Image Toolbar */}
+                 <div className="p-3 border-b border-stone-100 flex items-center justify-center gap-2 bg-stone-50/50 backdrop-blur-md sticky top-0 z-20">
+                    <div className="flex bg-white rounded-xl shadow-sm border border-stone-200 p-1">
+                        <button onClick={() => changeStep('SEARCH')} className={`px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition-all ${step === 'SEARCH' ? 'bg-emerald-100 text-emerald-800 shadow-sm' : 'text-stone-500 hover:bg-stone-50'}`}>
+                            <Search size={14} /> Sök
+                        </button>
+                        <button onClick={() => changeStep('GENERATE')} className={`px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition-all ${step === 'GENERATE' ? 'bg-emerald-100 text-emerald-800 shadow-sm' : 'text-stone-500 hover:bg-stone-50'}`}>
+                            <MessageSquarePlus size={14} /> Generera
+                        </button>
+                        <button onClick={() => changeStep('TEMPLATES')} className={`px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition-all ${step === 'TEMPLATES' ? 'bg-emerald-100 text-emerald-800 shadow-sm' : 'text-stone-500 hover:bg-stone-50'}`}>
+                            <LayoutTemplate size={14} /> Mallar
+                        </button>
+                        {(selectedImage || selectedImageUrl) && (
+                             <button onClick={() => changeStep('EDIT')} className={`px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition-all ${step === 'EDIT' ? 'bg-emerald-100 text-emerald-800 shadow-sm' : 'text-stone-500 hover:bg-stone-50'}`}>
+                                <Wand2 size={14} /> Redigera
+                             </button>
+                        )}
                     </div>
-                )}
-             </>
-           ) : (
-             <div className="text-stone-300 text-center max-w-xs">
-               <Wand2 className="w-16 h-16 mx-auto mb-4 opacity-50" />
-               <p className="font-serif italic">Ingen bild vald.</p>
-             </div>
-           )}
-        </div>
+                    
+                    <button onClick={handleUploadClick} className="ml-2 px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 text-stone-600 bg-white border border-stone-200 hover:border-emerald-300 hover:text-emerald-800 transition-all shadow-sm">
+                        <Upload size={14} /> Ladda upp
+                        <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileChange} />
+                    </button>
+                 </div>
 
-        <div className="flex-1 md:w-96 md:h-auto flex flex-col bg-white border border-stone-200 rounded-2xl shadow-lg overflow-hidden">
-          <div className="bg-stone-50 px-5 py-3 border-b border-stone-200 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-                <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></div>
-                <span className="text-xs font-bold text-stone-600 uppercase tracking-widest">AI Editor</span>
-            </div>
-            <button onClick={() => setStep('SEARCH')} className="text-xs text-stone-400 hover:text-emerald-700 font-medium transition-colors">Visa alla (Grid)</button>
-          </div>
-          
-          <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-white custom-scrollbar" ref={scrollRef}>
-            {chatMessages.length === 0 && (
-                <div className="text-center text-stone-400 py-10">
-                    <Sparkles className="w-12 h-12 mx-auto mb-3 opacity-20" />
-                    <p className="text-sm">Välj en åtgärd nedan eller skriv vad du vill fixa.</p>
-                </div>
-            )}
-            {chatMessages.map((msg, i) => (
-              <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[90%] p-3 rounded-2xl text-sm leading-relaxed shadow-sm ${msg.role === 'user' ? 'bg-emerald-900 text-white rounded-br-none' : 'bg-stone-100 text-stone-800 rounded-bl-none border border-stone-100'}`}>
-                  {msg.text}
-                </div>
+                 {/* Canvas / Workspace */}
+                 <div className="flex-1 relative overflow-y-auto bg-stone-50/50 custom-scrollbar">
+                    
+                    {error && (
+                      <div className="mx-4 mt-4 p-4 bg-red-50 text-red-700 rounded-xl flex items-center gap-3 border border-red-100 text-sm shadow-sm animate-in slide-in-from-top-2">
+                        <AlertCircle size={18} /> <span className="font-medium">{error}</span>
+                      </div>
+                    )}
+
+                    {/* VIEW: SEARCH */}
+                    {step === 'SEARCH' && (
+                        <div className="p-6 md:p-8 pb-20 max-w-5xl mx-auto">
+                             <div className="flex gap-3 mb-6">
+                                <div className="relative flex-1 group">
+                                    <input 
+                                        ref={searchInputRef} type="text" value={customSearchQuery}
+                                        onChange={(e) => setCustomSearchQuery(e.target.value)}
+                                        onKeyDown={(e) => e.key === 'Enter' && performSearch()}
+                                        placeholder="Sök produktbilder..."
+                                        className="w-full bg-white border border-stone-200 rounded-xl pl-12 pr-4 py-3.5 text-sm font-medium focus:border-emerald-500 focus:ring-4 focus:ring-emerald-50 outline-none transition-all shadow-sm group-hover:border-emerald-300"
+                                    />
+                                    <Search size={20} className="absolute left-4 top-3.5 text-stone-400 group-focus-within:text-emerald-600 transition-colors" />
+                                </div>
+                                <button onClick={() => performSearch()} disabled={isLoading} className="bg-emerald-900 hover:bg-emerald-800 text-white px-8 py-3 rounded-xl text-sm font-bold transition-all shadow-lg shadow-emerald-900/10 active:scale-95">
+                                    {isLoading ? <Loader2 className="animate-spin" /> : 'Sök'}
+                                </button>
+                            </div>
+                            
+                            {/* Chips */}
+                            <div className="flex flex-wrap gap-2 mb-8">
+                                {searchChips.map((chip, idx) => (
+                                    <button key={idx} onClick={() => handleChipClick(idx)}
+                                        className={`text-[11px] px-3 py-1.5 rounded-full border transition-all flex items-center gap-1.5 font-bold uppercase tracking-wider ${
+                                            chip.active 
+                                            ? 'bg-emerald-100 text-emerald-800 border-emerald-200 shadow-sm' 
+                                            : 'bg-white text-stone-400 border-stone-100 line-through decoration-stone-400'
+                                        }`}
+                                    >
+                                        {chip.active ? <CheckCircle2 size={12} /> : <X size={12} />} {chip.label}
+                                    </button>
+                                ))}
+                            </div>
+
+                            {/* Grid */}
+                            {isLoading && searchResults.length === 0 ? (
+                                <div className="flex flex-col items-center justify-center py-20 text-stone-400 animate-in fade-in duration-500">
+                                    <div className="relative">
+                                        <div className="w-16 h-16 border-4 border-emerald-100 rounded-full animate-spin border-t-emerald-600 mb-6"></div>
+                                        <div className="absolute inset-0 flex items-center justify-center">
+                                            <Search size={20} className="text-emerald-600" />
+                                        </div>
+                                    </div>
+                                    <p className="text-lg font-medium text-stone-600">Söker efter bilder...</p>
+                                    <p className="text-sm text-stone-400">Letar på Google & butiker</p>
+                                </div>
+                            ) : (
+                                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6" ref={resultsContainerRef}>
+                                    {searchResults.length === 0 && !isLoading && (
+                                        <div className="col-span-full text-center py-20 text-stone-400">
+                                            <div className="w-20 h-20 bg-stone-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                                                <Search size={32} className="opacity-30" />
+                                            </div>
+                                            <p className="font-bold text-lg text-stone-500">Inga resultat hittades</p>
+                                            <p>Prova att ändra sökorden ovan.</p>
+                                        </div>
+                                    )}
+                                    {searchResults.map((res, idx) => (
+                                        <ImageResultItem key={`${res.url}-${idx}`} res={res} idx={idx} isSelected={false} onClick={() => handleImageSelect(res.url)} />
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* VIEW: GENERATE */}
+                    {step === 'GENERATE' && (
+                        <div className="p-8 max-w-2xl mx-auto h-full flex flex-col justify-center">
+                            <div className="bg-white p-8 rounded-3xl border border-stone-200 shadow-xl relative overflow-hidden">
+                                <div className="absolute top-0 right-0 p-32 bg-emerald-50 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2 opacity-50"></div>
+                                
+                                <div className="relative z-10">
+                                    <div className="flex items-center gap-3 mb-6 text-emerald-900">
+                                        <div className="w-10 h-10 bg-emerald-100 rounded-full flex items-center justify-center text-emerald-600">
+                                            <Sparkles size={20} />
+                                        </div>
+                                        <div>
+                                            <h3 className="font-bold text-lg serif-font">AI Studio Generator</h3>
+                                            <p className="text-xs text-stone-500 uppercase tracking-widest font-bold">Skapa ny bild från text</p>
+                                        </div>
+                                    </div>
+                                    
+                                    <textarea 
+                                        value={generationPrompt}
+                                        onChange={(e) => setGenerationPrompt(e.target.value)}
+                                        rows={4}
+                                        className="w-full bg-stone-50 border border-stone-200 rounded-2xl p-5 text-sm focus:border-emerald-500 focus:ring-4 focus:ring-emerald-50 outline-none font-medium text-stone-800 mb-6 resize-none shadow-inner"
+                                        placeholder="Beskriv bilden du vill skapa..."
+                                    />
+                                    
+                                    <button 
+                                        onClick={handleStandardGenerate} 
+                                        disabled={isLoading || !generationPrompt.trim()}
+                                        className="w-full bg-emerald-900 hover:bg-emerald-800 text-white py-4 rounded-xl font-bold transition-all shadow-lg shadow-emerald-900/20 flex items-center justify-center gap-3 disabled:opacity-70 disabled:shadow-none hover:-translate-y-1 active:scale-95"
+                                    >
+                                        {isLoading ? <Loader2 size={20} className="animate-spin" /> : <Wand2 size={20} className="text-amber-400" />}
+                                        {isLoading ? 'Genererar bild...' : 'Skapa Studiobild'}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* VIEW: TEMPLATES */}
+                    {step === 'TEMPLATES' && (
+                        <div className="p-8 grid grid-cols-2 lg:grid-cols-3 gap-6 max-w-5xl mx-auto">
+                            {TEMPLATES.map(t => (
+                                <div key={t.id} onClick={() => handleTemplateSelect(t)} className="bg-white p-8 rounded-2xl border border-stone-200 hover:border-emerald-500 hover:ring-4 hover:ring-emerald-50 cursor-pointer transition-all flex flex-col items-center text-center group shadow-sm hover:shadow-xl">
+                                    <div className="w-16 h-16 bg-stone-50 text-emerald-800 rounded-full flex items-center justify-center mb-6 group-hover:scale-110 group-hover:bg-emerald-100 transition-all duration-300">
+                                        <LayoutTemplate size={28} />
+                                    </div>
+                                    <h4 className="font-bold text-emerald-950 text-lg serif-font mb-2 group-hover:text-emerald-700">{t.label}</h4>
+                                    <p className="text-xs text-stone-500 leading-relaxed font-medium">{t.prompt}</p>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+
+                    {/* VIEW: EDIT / PREVIEW */}
+                    {step === 'EDIT' && (
+                        <div className="h-full flex flex-col">
+                            <div className="flex-1 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] bg-stone-100 relative flex items-center justify-center p-8">
+                                {(selectedImage || selectedImageUrl) ? (
+                                    <div className="relative shadow-2xl shadow-black/10 group rounded-xl overflow-hidden bg-white">
+                                        <img 
+                                            src={selectedImage || selectedImageUrl || ''} 
+                                            className="max-w-full max-h-[50vh] object-contain" 
+                                            alt="Editing" 
+                                        />
+                                        
+                                        {/* Overlay controls */}
+                                        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex gap-3 z-20">
+                                            <button onClick={handleUndo} disabled={historyIndex <= 0} className="p-3 bg-white/90 text-stone-800 rounded-full hover:bg-white disabled:opacity-50 disabled:cursor-not-allowed shadow-lg backdrop-blur-sm border border-stone-100 transition-transform active:scale-90">
+                                                <Undo2 size={18} />
+                                            </button>
+                                            <button onClick={handleStandardPolish} className="px-5 py-3 bg-emerald-900/90 text-white rounded-full hover:bg-emerald-800 font-bold text-xs backdrop-blur-sm flex items-center gap-2 shadow-xl shadow-emerald-900/20 border border-white/10 transition-transform hover:-translate-y-1">
+                                                <Wand2 size={14} className="text-amber-400" /> Auto-Fix
+                                            </button>
+                                            <button onClick={handleRedo} disabled={historyIndex >= history.length - 1} className="p-3 bg-white/90 text-stone-800 rounded-full hover:bg-white disabled:opacity-50 disabled:cursor-not-allowed shadow-lg backdrop-blur-sm border border-stone-100 transition-transform active:scale-90">
+                                                <Redo2 size={18} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="text-center text-stone-400">
+                                        <ImageOff size={48} className="mx-auto mb-2 opacity-30" />
+                                        <p>Ingen bild vald</p>
+                                    </div>
+                                )}
+                            </div>
+                            
+                            {/* Chat Interface */}
+                            <div className="h-72 bg-white border-t border-stone-200 flex flex-col shadow-[0_-5px_20px_rgba(0,0,0,0.02)] z-10">
+                                <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar bg-stone-50/50" ref={scrollRef}>
+                                    {chatMessages.length === 0 && (
+                                        <div className="text-center py-8">
+                                            <div className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-800 rounded-full text-xs font-bold border border-emerald-100 mb-2">
+                                                <Sparkles size={12} /> AI Editor
+                                            </div>
+                                            <p className="text-stone-400 text-sm">Skriv instruktioner för att ändra bilden.</p>
+                                            <div className="flex justify-center gap-2 mt-3">
+                                                <span className="text-[10px] bg-white border border-stone-200 px-2 py-1 rounded-md text-stone-500">"Ta bort bakgrunden"</span>
+                                                <span className="text-[10px] bg-white border border-stone-200 px-2 py-1 rounded-md text-stone-500">"Gör ljusare"</span>
+                                            </div>
+                                        </div>
+                                    )}
+                                    {chatMessages.map((msg, i) => (
+                                        <div key={i} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'} animate-in slide-in-from-bottom-2 duration-300`}>
+                                            <div className={`max-w-[85%] rounded-2xl px-5 py-3 text-sm shadow-sm leading-relaxed ${
+                                                msg.role === 'user' 
+                                                ? 'bg-emerald-600 text-white rounded-br-sm' 
+                                                : 'bg-white text-stone-800 border border-stone-200 rounded-bl-sm'
+                                            }`}>
+                                                {msg.text}
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {isLoading && (
+                                        <div className="flex justify-start animate-in fade-in">
+                                            <div className="bg-white border border-stone-200 rounded-2xl rounded-bl-sm px-4 py-3 shadow-sm flex items-center gap-2">
+                                                <Loader2 size={14} className="animate-spin text-emerald-600" />
+                                                <span className="text-xs font-medium text-stone-500">Arbetar...</span>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                                <div className="p-4 bg-white border-t border-stone-100">
+                                    <div className="relative group">
+                                        <input 
+                                            type="text" 
+                                            value={chatInput}
+                                            onChange={(e) => setChatInput(e.target.value)}
+                                            onKeyDown={(e) => e.key === 'Enter' && !isLoading && handleSendMessage()}
+                                            placeholder="Beskriv ändring..."
+                                            disabled={!isEditable || isLoading}
+                                            className="w-full bg-stone-50 border border-stone-200 rounded-xl pl-5 pr-12 py-3.5 text-sm focus:ring-2 focus:ring-emerald-500 focus:bg-white outline-none transition-all placeholder-stone-400 font-medium"
+                                        />
+                                        <button 
+                                            onClick={() => handleSendMessage()}
+                                            disabled={!chatInput.trim() || isLoading}
+                                            className="absolute right-2 top-2 p-2 bg-emerald-900 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 disabled:bg-stone-300 transition-all hover:scale-105 active:scale-95 shadow-md"
+                                        >
+                                            <ArrowRight size={16} />
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                 </div>
               </div>
-            ))}
-            {isLoading && <div className="flex justify-start"><div className="bg-stone-50 p-3 rounded-2xl rounded-bl-none text-stone-500 flex items-center gap-2"><Loader2 className="animate-spin w-4 h-4 text-emerald-600" /><span className="text-xs font-medium">Jobbar...</span></div></div>}
-          </div>
-          
-          {/* QUICK ACTIONS */}
-          <div className="px-4 py-2 border-t border-stone-100 flex gap-2 overflow-x-auto">
-             <button 
-                onClick={handleStandardPolish}
-                disabled={isLoading || !isEditable}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-800 text-xs font-bold whitespace-nowrap hover:bg-emerald-100 transition-colors"
-             >
-                <Camera size={14} /> 📸 Studio-fix <Tooltip text="Gör bakgrunden vit, ta bort text och fixa ljuset automatiskt." />
-             </button>
-             <button 
-                onClick={() => handleSendMessage("Remove background and make it pure white")}
-                disabled={isLoading || !isEditable}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-stone-50 border border-stone-200 rounded-lg text-stone-600 text-xs font-medium whitespace-nowrap hover:bg-stone-100 transition-colors"
-             >
-                <div className="w-3 h-3 border border-stone-400 bg-white rounded-sm"></div> Vit bakgrund
-             </button>
-          </div>
 
-          <div className="p-3 bg-stone-50 border-t border-stone-200">
-            <div className="flex gap-2 relative">
-              <input type="text" value={chatInput} disabled={!isEditable || isLoading} onChange={(e) => setChatInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()} placeholder="T.ex. 'Ta bort texten'" className="flex-1 bg-white border border-stone-300 rounded-lg pl-3 pr-10 py-3 text-sm focus:border-emerald-500 outline-none disabled:bg-stone-100 shadow-sm" />
-              <button onClick={() => handleSendMessage()} disabled={!isEditable || isLoading || !chatInput.trim()} className="absolute right-1.5 top-1.5 bottom-1.5 bg-emerald-900 text-white p-2 rounded-md hover:bg-emerald-800 disabled:opacity-0 transition-all"><ArrowRight size={16} /></button>
-            </div>
-          </div>
-        </div>
-      </div>
+              {/* RIGHT COLUMN: DATA FORM (40%) */}
+              <div className="w-full xl:w-[420px] bg-stone-50/50 border-l border-stone-200 flex flex-col overflow-y-auto custom-scrollbar shadow-2xl z-20">
+                  <div className="p-6 border-b border-stone-200 bg-white sticky top-0 z-10 shadow-sm">
+                      <h4 className="font-bold text-stone-800 flex items-center gap-2 serif-font text-lg">
+                          <Tag size={20} className="text-emerald-600" />
+                          Produktkort
+                      </h4>
+                      <p className="text-xs text-stone-500 mt-1 font-medium">Redigera masterdata för export.</p>
+                  </div>
 
-      <div className="mt-auto p-3 md:p-4 border-t border-stone-200 flex justify-between items-center bg-white sticky bottom-0 z-20">
-        <button onClick={() => setStep('SEARCH')} disabled={isSaving} className="text-stone-400 hover:text-emerald-900 text-xs md:text-sm font-bold flex items-center gap-2 transition-colors uppercase tracking-wide">
-          <ChevronLeft size={16} /> Tillbaka
-        </button>
-        <button onClick={finalizeImage} disabled={!displayImage || isSaving} className="flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-white px-6 md:px-8 py-3 rounded-lg font-bold shadow-lg shadow-amber-200 transition-all hover:-translate-y-0.5 disabled:opacity-50 disabled:shadow-none min-w-[140px] md:min-w-[160px] justify-center text-sm md:text-base">
-            {isSaving ? <><Loader2 className="animate-spin" size={18} /> Sparar...</> : <>Spara & Nästa <ArrowRight size={18} /></>}
-        </button>
+                  <div className="p-6 space-y-8">
+                      {/* Basic Info */}
+                      <div className="space-y-5">
+                          <div className="bg-white p-5 rounded-2xl border border-stone-200 shadow-sm hover:shadow-md transition-shadow group focus-within:ring-2 focus-within:ring-emerald-100">
+                              <label className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-2 block">Produktnamn</label>
+                              <textarea 
+                                  value={formData.product_name} 
+                                  onChange={(e) => handleFormChange('product_name', e.target.value)}
+                                  rows={2}
+                                  className="w-full bg-transparent border-none p-0 text-base font-bold text-stone-800 focus:ring-0 outline-none resize-none placeholder-stone-300"
+                                  placeholder="Ange produktnamn..."
+                              />
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-4">
+                              <div className="bg-white p-4 rounded-xl border border-stone-200 shadow-sm hover:shadow-md transition-shadow">
+                                  <label className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1 block">Art.nr / SKU</label>
+                                  <div className="relative">
+                                      <Package size={14} className="absolute left-0 top-3 text-emerald-600" />
+                                      <input 
+                                          type="text" 
+                                          value={formData.sku}
+                                          onChange={(e) => handleFormChange('sku', e.target.value)}
+                                          className="w-full bg-transparent border-none pl-6 py-2 text-sm font-mono font-medium text-stone-700 focus:ring-0 outline-none"
+                                          placeholder="-"
+                                      />
+                                  </div>
+                              </div>
+                              <div className="bg-white p-4 rounded-xl border border-stone-200 shadow-sm hover:shadow-md transition-shadow">
+                                  <label className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1 block">Varumärke</label>
+                                  <input 
+                                      type="text" 
+                                      value={formData.brand}
+                                      onChange={(e) => handleFormChange('brand', e.target.value)}
+                                      className="w-full bg-transparent border-none p-2 text-sm font-bold text-stone-800 focus:ring-0 outline-none"
+                                      placeholder="-"
+                                  />
+                              </div>
+                          </div>
+                          
+                          <div className="bg-white p-5 rounded-2xl border border-stone-200 shadow-sm hover:shadow-md transition-shadow">
+                              <label className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-2 block">Beskrivning</label>
+                              <textarea 
+                                  value={formData.description} 
+                                  onChange={(e) => handleFormChange('description', e.target.value)}
+                                  rows={6}
+                                  className="w-full bg-transparent border-none p-0 text-sm text-stone-600 focus:ring-0 outline-none resize-y leading-relaxed placeholder-stone-300"
+                                  placeholder="Skriv en säljande beskrivning..."
+                              />
+                          </div>
+                      </div>
+
+                      <div className="flex items-center gap-4">
+                        <div className="h-px bg-stone-200 flex-1"></div>
+                        <span className="text-[10px] font-bold text-stone-300 uppercase tracking-widest bg-stone-50 px-2">WooCommerce</span>
+                        <div className="h-px bg-stone-200 flex-1"></div>
+                      </div>
+
+                      {/* WooCommerce Data */}
+                      <div className="space-y-5">
+                          <div className="grid grid-cols-2 gap-4">
+                              <div className="bg-white p-4 rounded-xl border border-stone-200 shadow-sm relative overflow-hidden">
+                                  <label className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1 block">Pris</label>
+                                  <div className="flex items-baseline gap-1">
+                                      <span className="text-stone-400 text-sm">kr</span>
+                                      <input 
+                                          type="text" 
+                                          value={formData.price}
+                                          onChange={(e) => handleFormChange('price', e.target.value)}
+                                          className="w-full bg-transparent border-none p-0 text-lg font-bold text-stone-800 focus:ring-0 outline-none"
+                                          placeholder="0"
+                                      />
+                                  </div>
+                              </div>
+                              <div className="bg-white p-4 rounded-xl border border-amber-200 shadow-sm relative overflow-hidden bg-amber-50/30">
+                                  <label className="text-[10px] font-bold text-amber-600/70 uppercase tracking-widest mb-1 block">Rea-pris</label>
+                                  <div className="flex items-baseline gap-1">
+                                      <span className="text-amber-500 text-sm">kr</span>
+                                      <input 
+                                          type="text" 
+                                          value={formData.sale_price}
+                                          onChange={(e) => handleFormChange('sale_price', e.target.value)}
+                                          className="w-full bg-transparent border-none p-0 text-lg font-bold text-amber-700 focus:ring-0 outline-none"
+                                          placeholder="-"
+                                      />
+                                  </div>
+                              </div>
+                          </div>
+
+                          <div className="bg-white p-4 rounded-xl border border-stone-200 shadow-sm">
+                              <label className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1 block">Lagersaldo</label>
+                              <input 
+                                  type="text" 
+                                  value={formData.stock_qty}
+                                  onChange={(e) => handleFormChange('stock_qty', e.target.value)}
+                                  placeholder="Antal..."
+                                  className="w-full bg-transparent border-none p-1 text-sm font-medium text-stone-700 focus:ring-0 outline-none"
+                              />
+                          </div>
+                          
+                          <div className="bg-white p-4 rounded-xl border border-stone-200 shadow-sm">
+                              <label className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1 block">Kategorier</label>
+                              <input 
+                                  type="text" 
+                                  value={formData.categories}
+                                  onChange={(e) => handleFormChange('categories', e.target.value)}
+                                  placeholder="Kläder > Herr > Skjortor"
+                                  className="w-full bg-transparent border-none p-1 text-sm font-medium text-stone-700 focus:ring-0 outline-none"
+                              />
+                          </div>
+                      </div>
+                  </div>
+              </div>
+
+          </div>
       </div>
     </div>
   );

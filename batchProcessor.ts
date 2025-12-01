@@ -1,3 +1,4 @@
+
 import { ProcessedProduct, Product } from './types';
 import { searchProductImages, generateProductImage } from './geminiService';
 import { uploadWithRetry, isCloudinaryConfigured, uploadToCloudinary } from './cloudinaryService';
@@ -34,7 +35,7 @@ export async function runBatchProcess(
     skipExistingImages?: boolean;
     abortSignal?: AbortSignal;
     onProductProcessed?: (product: ProcessedProduct) => void;
-    isPaused?: () => boolean;
+    checkPauseState?: () => boolean;
   } = {}
 ): Promise<BatchResult> {
   const {
@@ -42,7 +43,7 @@ export async function runBatchProcess(
     skipExistingImages = true,
     abortSignal,
     onProductProcessed,
-    isPaused
+    checkPauseState
   } = options;
 
   logger.info(`Starting batch process for ${products.length} products`, { options });
@@ -53,31 +54,24 @@ export async function runBatchProcess(
   let failed = 0;
   let skipped = 0;
 
-  const waitWhilePaused = async () => {
-    while (isPaused?.()) {
-      if (abortSignal?.aborted) {
-        throw new Error('Batch process aborted');
-      }
-      await delay(250);
-    }
-  };
-
   for (let i = 0; i < products.length; i++) {
-    // Check for abort
+    
+    // --- ABORT CHECK START ---
     if (abortSignal?.aborted) {
-      logger.warn('Batch process aborted by user');
-      // Mark remaining as pending
-      for (let j = i; j < products.length; j++) {
-        const remaining = products[j] as ProcessedProduct;
-        remaining.status = 'pending';
-        results.push(remaining);
-      }
+      logger.warn('Batch process aborted by user (Signal received)');
       break;
     }
 
-    const product = products[i] as ProcessedProduct;
-    await waitWhilePaused();
+    // --- PAUSE CHECK START ---
+    if (checkPauseState) {
+        while (checkPauseState()) {
+            if (abortSignal?.aborted) break; // Allow aborting while paused
+            await delay(500); // Polling interval
+        }
+        if (abortSignal?.aborted) break;
+    }
 
+    const product = products[i] as ProcessedProduct;
     // Skip already completed products if restarting a batch
     if (product.status === 'completed' && skipExistingImages) {
         results.push(product);
@@ -145,10 +139,24 @@ export async function runBatchProcess(
         }
 
     } catch (error: any) {
+        // IMPROVED ERROR LOGGING
         let errMsg = 'Unknown error';
-        if (typeof error === 'string') errMsg = error;
-        else if (error instanceof Error) errMsg = error.message;
-        else if (typeof error === 'object') errMsg = JSON.stringify(error, Object.getOwnPropertyNames(error));
+        
+        try {
+            if (typeof error === 'string') {
+                errMsg = error;
+            } else if (error instanceof Error) {
+                errMsg = error.message;
+            } else if (typeof error === 'object') {
+                // Handle arbitrary objects, preventing [object Object]
+                errMsg = JSON.stringify(error, Object.getOwnPropertyNames(error));
+                if (errMsg === '{}') errMsg = String(error);
+            } else {
+                errMsg = String(error);
+            }
+        } catch (e) {
+            errMsg = 'Non-serializable error object';
+        }
 
         logger.error(`Timeout/Error processing ${product.product_name}`, { message: errMsg });
         
@@ -161,6 +169,13 @@ export async function runBatchProcess(
         failed++;
         
         if (onProductProcessed) onProductProcessed(result);
+    }
+
+    // --- ABORT CHECK POST-PROCESS ---
+    // Important: Check abort immediately after processing to stop quickly if user clicked stop during API call
+    if (abortSignal?.aborted) {
+        logger.warn('Batch process aborted immediately after processing');
+        break;
     }
 
     // Dynamisk delay baserat på resultat
@@ -182,8 +197,18 @@ export async function runBatchProcess(
     }
 
     // logger.info(`Wait ${dynamicDelay}ms...`);
-    await waitWhilePaused();
     await delay(dynamicDelay);
+  }
+
+  // Fill remaining items if aborted
+  if (abortSignal?.aborted && results.length < products.length) {
+      for (let j = results.length; j < products.length; j++) {
+          const remaining = products[j] as ProcessedProduct;
+          // Ensure they are marked pending if not processed
+          if (!results.find(r => r.id === remaining.id)) {
+             results.push({ ...remaining, status: 'pending' });
+          }
+      }
   }
 
   logger.info('Batch process finished', { completed, failed, skipped });

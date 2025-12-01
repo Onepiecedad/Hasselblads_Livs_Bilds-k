@@ -51,56 +51,73 @@ export async function uploadToCloudinary(imageData: string): Promise<string> {
 
   const endpoint = `https://api.cloudinary.com/v1_1/${config.cloudName}/image/upload`;
   
-  const response = await fetch(endpoint, { method: 'POST', body: formData });
+  // Add 30s timeout to prevent hanging requests
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000);
 
-  if (!response.ok) {
-    let errorData: any = {};
-    let responseText = '';
-    
-    try {
-        responseText = await response.text();
-        // Try parsing JSON, otherwise keep as text
-        errorData = JSON.parse(responseText);
-    } catch (e) {
-        errorData = { error: { message: responseText || response.statusText } };
-    }
-    
-    const cloudMsg = errorData?.error?.message || JSON.stringify(errorData);
-    const errorMessage = `Cloudinary upload failed: ${response.status} ${cloudMsg}`;
-    
-    // Log as WARN instead of ERROR to avoid spamming the console during retries.
-    logger.warn('Cloudinary API Error', { 
-        status: response.status, 
-        message: cloudMsg
+  try {
+    const response = await fetch(endpoint, { 
+      method: 'POST', 
+      body: formData,
+      signal: controller.signal
     });
-    
-    throw new Error(errorMessage);
+
+    if (!response.ok) {
+      let errorData: any = {};
+      let responseText = '';
+      
+      try {
+          responseText = await response.text();
+          // Try parsing JSON, otherwise keep as text
+          errorData = JSON.parse(responseText);
+      } catch (e) {
+          errorData = { error: { message: responseText || response.statusText } };
+      }
+      
+      const cloudMsg = errorData?.error?.message || JSON.stringify(errorData);
+      const errorMessage = `Cloudinary upload failed: ${response.status} ${cloudMsg}`;
+      
+      // Log as WARN instead of ERROR to avoid spamming the console during retries.
+      logger.warn('Cloudinary API Error', { 
+          status: response.status, 
+          message: cloudMsg
+      });
+      
+      throw new Error(errorMessage);
+    }
+
+    const data = await response.json();
+    let secureUrl = data.secure_url;
+
+    // --- E-COMMERCE STANDARDIZATION ---
+    const bgParam = transformConfig.background === 'transparent' 
+      ? 'b_transparent' 
+      : transformConfig.background === 'auto' 
+          ? 'b_auto' 
+          : 'b_white';
+
+    const qualityParam = typeof transformConfig.quality === 'number' 
+      ? `q_${transformConfig.quality}` 
+      : 'q_auto';
+
+    const formatParam = transformConfig.background === 'transparent' ? 'f_png' : 'f_jpg';
+
+    const transformation = `c_pad,${bgParam},w_${transformConfig.width},h_${transformConfig.height},${formatParam},${qualityParam}`;
+
+    // Inject transformation before the version component (e.g., /v12345/)
+    if (secureUrl.includes('/upload/')) {
+        secureUrl = secureUrl.replace('/upload/', `/upload/${transformation}/`);
+    }
+
+    return secureUrl;
+  } catch (error: any) {
+    if (error.name === 'AbortError') {
+      throw new Error('Cloudinary Upload Timeout (30s)');
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  const data = await response.json();
-  let secureUrl = data.secure_url;
-
-  // --- E-COMMERCE STANDARDIZATION ---
-  const bgParam = transformConfig.background === 'transparent' 
-    ? 'b_transparent' 
-    : transformConfig.background === 'auto' 
-        ? 'b_auto' 
-        : 'b_white';
-
-  const qualityParam = typeof transformConfig.quality === 'number' 
-    ? `q_${transformConfig.quality}` 
-    : 'q_auto';
-
-  const formatParam = transformConfig.background === 'transparent' ? 'f_png' : 'f_jpg';
-
-  const transformation = `c_pad,${bgParam},w_${transformConfig.width},h_${transformConfig.height},${formatParam},${qualityParam}`;
-
-  // Inject transformation before the version component (e.g., /v12345/)
-  if (secureUrl.includes('/upload/')) {
-      secureUrl = secureUrl.replace('/upload/', `/upload/${transformation}/`);
-  }
-
-  return secureUrl;
 }
 
 export async function uploadWithRetry(imageData: string, maxRetries = 3): Promise<string> {
@@ -124,7 +141,7 @@ export async function uploadWithRetry(imageData: string, maxRetries = 3): Promis
       // If Cloudinary fails to fetch remote URL (DNS, 403 Forbidden, etc),
       // try to download it locally in browser and upload the data URI instead.
       const isRemoteUrl = imageData.startsWith('http');
-      if (isRemoteUrl && (errMsg.includes('400') || errMsg.includes('403') || errMsg.includes('DNS') || errMsg.includes('fail'))) {
+      if (isRemoteUrl && (errMsg.includes('400') || errMsg.includes('403') || errMsg.includes('DNS') || errMsg.includes('fail') || errMsg.includes('Timeout'))) {
           logger.info('Cloudinary fetch failed, attempting local fallback download...');
           try {
               const base64Data = await urlToBase64(imageData);
